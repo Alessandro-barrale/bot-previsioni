@@ -1,0 +1,39 @@
+name: Prova (test + domande di prova, senza invio)
+
+# Solo a mano. Non invia mai: INVIA_PREVISIONI è forzato a "no".
+on:
+  workflow_dispatch:
+    inputs:
+      domande_vere:
+        description: "Prova anche sulle domande dell'area di prova di Metaculus (spende crediti dei modelli)"
+        type: boolean
+        default: false
+
+jobs:
+  prova:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --python 3.11
+      - name: Test
+        run: uv run --no-sync pytest -q
+      - name: Prova offline con il modello finto
+        run: uv run --no-sync python main.py --modo prova_offline
+        env:
+          MODELLO_FINTO: "si"
+          PERCORSO_REGISTRO: /tmp/prova.sqlite
+      - name: Prova sulle domande dell'area di prova (senza invio)
+        if: inputs.domande_vere
+        run: uv run --no-sync python main.py --modo test_questions
+        env:
+          INVIA_PREVISIONI: "no"
+          PERCORSO_REGISTRO: /tmp/prova-vera.sqlite
+          METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ASKNEWS_CLIENT_ID: ${{ secrets.ASKNEWS_CLIENT_ID }}
+          ASKNEWS_SECRET: ${{ secrets.ASKNEWS_SECRET }}

@@ -1,0 +1,41 @@
+name: Rapporto settimanale
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * 1" # lunedì alle 7 UTC
+
+concurrency:
+  group: bot-previsioni
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  rapporto:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --no-dev --python 3.11
+      - name: Scrivi il rapporto
+        run: uv run --no-sync python main.py --modo rapporto
+        env:
+          METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
+          INVIA_PREVISIONI: ${{ vars.INVIA_PREVISIONI }}
+          TETTO_MESE_USD: ${{ vars.TETTO_MESE_USD }}
+      - name: Mostra il rapporto nella pagina del giro
+        run: cat rapporti/$(date -u +%Y-%m-%d).md >> "$GITHUB_STEP_SUMMARY"
+      - name: Salva il rapporto
+        run: |
+          git config user.name "bot-previsioni"
+          git config user.email "bot-previsioni@users.noreply.github.com"
+          git add rapporti/
+          git diff --cached --quiet && exit 0
+          git commit -m "Rapporto settimanale $(date -u +%Y-%m-%d)"
+          git pull --rebase --quiet
+          git push --quiet

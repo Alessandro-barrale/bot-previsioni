@@ -1,0 +1,25 @@
+[project]
+name = "bot-previsioni"
+version = "0.1.0"
+description = "Bot automatico per i tornei FutureEval di Metaculus (basato su metac-bot-template)"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "python-decouple>=3.8",
+    "requests>=2.32.3",
+    "asknews>=0.13.11",
+    "numpy>=2.3.0",
+    "openai>=2.0.0",
+    "python-dotenv>=1.0.1",
+    "forecasting-tools>=0.2.92,<0.4.0",
+    "anthropic>=1.13.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

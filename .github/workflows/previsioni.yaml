@@ -1,0 +1,53 @@
+name: Previsioni (torneo stagionale + MiniBench)
+
+# Ogni ora al minuto 17. Un giro senza domande nuove dura meno di un minuto,
+# che GitHub conta come 1 minuto: 24 x 30 = 720 minuti al mese, più il tempo
+# delle domande vere. Il calcolo completo è nel README.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+# Lo stesso gruppo per tutti i workflow che scrivono nel registro: mai due giri insieme.
+concurrency:
+  group: bot-previsioni
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  previsioni:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Installa le dipendenze
+        run: uv sync --frozen --no-dev --python 3.11
+      - name: Fai le previsioni
+        run: uv run --no-sync python main.py --modo torneo
+        env:
+          METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ASKNEWS_CLIENT_ID: ${{ secrets.ASKNEWS_CLIENT_ID }}
+          ASKNEWS_SECRET: ${{ secrets.ASKNEWS_SECRET }}
+          # Variabili del repository (non segrete). L'invio parte solo con INVIA_PREVISIONI = si.
+          INVIA_PREVISIONI: ${{ vars.INVIA_PREVISIONI }}
+          MODELLI_PREVISIONE: ${{ vars.MODELLI_PREVISIONE }}
+          TETTO_DOMANDA_USD: ${{ vars.TETTO_DOMANDA_USD }}
+          TETTO_GIORNO_USD: ${{ vars.TETTO_GIORNO_USD }}
+          TETTO_MESE_USD: ${{ vars.TETTO_MESE_USD }}
+      - name: Salva il registro delle spese e delle previsioni
+        if: always()
+        run: |
+          git config user.name "bot-previsioni"
+          git config user.email "bot-previsioni@users.noreply.github.com"
+          git add dati/registro.sqlite 2>/dev/null || exit 0
+          git diff --cached --quiet && exit 0
+          git commit -m "Registro: giro del $(date -u +%Y-%m-%dT%H:%M)Z"
+          git pull --rebase --quiet
+          git push --quiet
