@@ -1,13 +1,13 @@
 name: Previsioni (torneo stagionale + MiniBench)
 
-# Ogni 30 minuti, ai minuti 17 e 47 (le domande restano aperte 1,5-3 ore e GitHub
-# a volte ritarda i giri). Un giro senza domande nuove dura meno di un minuto,
-# che GitHub conta come 1 minuto: 48 x 30 = 1.440 minuti al mese, più il tempo
-# delle domande vere. Serve GitHub Pro (3.000 minuti). Il calcolo completo è nel README.
+# Ogni ora al minuto 17 (le domande restano aperte 1,5-3 ore). Un giro senza
+# domande nuove dura meno di un minuto, che GitHub conta come 1 minuto:
+# 24 x 30 = 720 minuti al mese, più il tempo delle domande vere, dentro i 2.000
+# gratuiti. Il calcolo completo è nel README.
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17,47 * * * *"
+    - cron: "17 * * * *"
 
 # Lo stesso gruppo per tutti i workflow che scrivono nel registro: mai due giri insieme.
 concurrency:
