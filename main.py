@@ -168,6 +168,12 @@ def main() -> int:
 
     print_run_summary_banner(rapporti, will_publish=imp.invia_previsioni, tournament_url=URL_TORNEI.get(args.modo))
     # Le domande saltate (errori, tetti) non devono far fallire il giro: il bot riprova al giro dopo.
+    # Se però falliscono tutte, il giro è rosso: di solito è una chiave sbagliata, e GitHub manda l'email.
+    # Un tetto di spesa raggiunto invece è previsto e resta verde.
+    errori = [r for r in rapporti if isinstance(r, BaseException)]
+    if rapporti and len(errori) == len(rapporti) and not any("tetto" in str(e) for e in errori):
+        print("Tutte le domande sono fallite: controlla le chiavi e il log.")
+        return 1
     return 0
 
 
