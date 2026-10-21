@@ -19,7 +19,6 @@ jobs:
         with:
           enable-cache: true
       - name: Controllo delle chiavi (stampa solo l'inizio e la lunghezza)
-        if: inputs.domande_vere
         run: |
           k="$ANTHROPIC_API_KEY"
           echo "ANTHROPIC_API_KEY: inizia con '${k:0:10}', lunga ${#k} caratteri"
@@ -27,8 +26,11 @@ jobs:
           code=$(curl -s -o /dev/null -w '%{http_code}' https://api.anthropic.com/v1/models \
             -H "x-api-key: $k" -H "anthropic-version: 2023-06-01")
           echo "Risposta di Anthropic: HTTP $code (200 = chiave valida, 401 = chiave non valida)"
+          utente=$(curl -s https://www.metaculus.com/api/users/me/ -H "Authorization: Token $METACULUS_TOKEN"             | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('username'), '(bot)' if d.get('is_bot') else '')")
+          echo "Bot su Metaculus: $utente"
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
       - run: uv sync --frozen --python 3.11
       - name: Test
         run: uv run --no-sync pytest -q
