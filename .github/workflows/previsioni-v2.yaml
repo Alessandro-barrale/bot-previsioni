@@ -47,6 +47,7 @@ jobs:
           TETTO_MESE_USD: ${{ vars.TETTO_MESE_USD }}
           FONTE_RISOLUZIONE: ${{ vars.FONTE_RISOLUZIONE }}
           MERCATI: ${{ vars.MERCATI }}
+          KALSHI: ${{ vars.KALSHI }}
           SERIE_STORICHE: ${{ vars.SERIE_STORICHE }}
       - name: Salva il registro del bot secondario
         if: always()

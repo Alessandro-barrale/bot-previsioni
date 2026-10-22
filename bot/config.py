@@ -67,6 +67,8 @@ class Impostazioni:
     fonte_risoluzione: bool = True
     mercati: bool = True
     serie_storiche: bool = True
+    # Kalshi dentro i mercati (KALSHI=no lo toglie e lascia Polymarket e Manifold).
+    kalshi: bool = True
 
     # Tempo: le domande restano aperte 3 ore. Sotto i 12 minuti si salta (una previsione
     # non pubblicata vale zero), sotto i 40 si fa la via veloce (solo web e mercati).
@@ -100,6 +102,7 @@ class Impostazioni:
             ricerche_web_per_giro=_int("RICERCHE_WEB_PER_GIRO", 3),
             fonte_risoluzione=_acceso("FONTE_RISOLUZIONE"),
             mercati=_acceso("MERCATI"),
+            kalshi=_acceso("KALSHI"),
             serie_storiche=_acceso("SERIE_STORICHE"),
             minuti_salto=_int("MINUTI_SALTO", 12),
             minuti_via_veloce=_int("MINUTI_VIA_VELOCE", 40),

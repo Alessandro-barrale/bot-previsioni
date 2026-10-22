@@ -11,7 +11,7 @@ Le regole vietano di intervenire sulle previsioni: dopo l'attivazione il bot lav
 2. **Tempo:** le domande restano aperte 3 ore. Se mancano meno di 12 minuti alla chiusura la domanda viene saltata (una previsione non pubblicata vale zero); sotto i 40 minuti si fa la **via veloce** (solo ricerca web e mercati, un giro).
 3. **Ricerca v2**, tutto in parallelo e con ogni fonte che può cadere senza bloccare le altre:
    - la **fonte di risoluzione**: le pagine citate nei criteri e nelle note vengono scaricate (max 2 pagine, 6.000 caratteri), con la data, e messe nel briefing come "cosa dice ORA la fonte";
-   - i **mercati di previsione** (Polymarket, Manifold, Kalshi, API pubbliche gratuite): un modello economico decide quali mercati sono davvero sulla stessa domanda, poi il prezzo entra come evidenza pesata per liquidità (0 a 1.000 $ di volume, 4% a 10.000 $, pieno verso 100.000 $) e proiettato alla nostra data;
+   - i **mercati di previsione** (Polymarket, Manifold, Kalshi, API pubbliche gratuite): un modello economico scrive da 1 a 3 query corte (2-4 parole, nomi propri, senza accenti: "El Nino", "Swiss drought"; se non risponde si usano al massimo 3 parole chiave del titolo), ogni piattaforma viene cercata con ogni query e i candidati si uniscono senza doppioni (al massimo 5 per piattaforma); poi lo stesso modello decide quali mercati sono davvero sulla stessa domanda, e il prezzo entra come evidenza pesata per liquidità (0 a 1.000 $ di volume, 4% a 10.000 $, pieno verso 100.000 $) e proiettato alla nostra data. Kalshi non ha una ricerca testuale pubblica: il bot legge la lista degli eventi aperti (pagine da 200, al massimo 15, una volta ogni mezz'ora) e la filtra con le parole delle query (vedi la nota sotto le variabili);
    - le **serie storiche** per le domande numeriche: FRED (API con `FRED_API_KEY`, altrimenti il CSV pubblico senza chiave) e Yahoo Finance; ultimi valori e variabilità su finestre lunghe quanto il tempo che resta;
    - **AskNews** (con la chiave) e la **ricerca web di Claude**; poi un modello economico elenca cosa manca e si fa un secondo giro web.
 4. **Previsioni indipendenti** con il **prompt v2** (metodo dei bot vincenti): status quo e resolution check prima di tutto, base rate calcolata dai dati e "anchor on your math", regole soft clock / history discharged / null result, domande multi-clausola come prodotto booleano, auto-controllo di calibrazione. Metà dei campioni ragiona dall'**outside view** (classe di riferimento), metà dall'**inside view** (meccanismi), sulla stessa ricerca. Ogni risposta chiude con un blocco JSON obbligatorio (le espressioni regolari restano come riserva).
@@ -69,8 +69,11 @@ Senza chiavi dei modelli il bot usa il proxy di Metaculus con il solo `METACULUS
 | `EFFORT_PREVISIONE` | `high` | `reasoning_effort` sui modelli OpenAI e Google (`no` per toglierlo) |
 | `EFFORT_ANTHROPIC` | (vuoto) | `high` per chiedere il ragionamento esteso anche a Opus/Sonnet (costo non ancora misurato) |
 | `FONTE_RISOLUZIONE`, `MERCATI`, `SERIE_STORICHE` | `si` | interruttori delle fonti v2: `no` per spegnerne una |
+| `KALSHI` | `si` | `no` per togliere solo Kalshi dai mercati (restano Polymarket e Manifold) |
 | `MINUTI_SALTO`, `MINUTI_VIA_VELOCE` | `12`, `40` | soglie di tempo alla chiusura |
 | `BOT_2_ATTIVO`, `INVIA_PREVISIONI_2`, `MODELLI_PREVISIONE_2` | (vuoto) | bot secondario: `si` per abilitare il workflow *Previsioni v2*, `si` per farlo inviare, roster suo |
+
+**Nota su Kalshi e Polymarket.** Fino al 22/10/2026 Kalshi dava sempre 0: il bot leggeva solo i primi 200 mercati aperti (su decine di migliaia, quasi tutti combinazioni sportive) e li filtrava con parole chiave sbagliate. Ora legge gli eventi aperti (`/events`, che lascia fuori le combinazioni) che chiudono oltre le prossime 24 ore. Dall'Italia `kalshi.com` e `polymarket.com` sono bloccati dall'ADM (il DNS risponde con `sito-inibito-giochi.adm.gov.it`), quindi la ricerca su Kalshi è provata solo con risposte finte, non contro l'API vera; dal runner di GitHub le due API rispondono. Per controllare, nel log di un giro guarda la riga `Mercati per '...': N trovati (Manifold a, Polymarket b, Kalshi c)`: se Kalshi resta a 0 su tutte le domande, o compare l'avviso `Mercati Kalshi non letti`, metti `KALSHI` = `no`.
 
 ## Bot secondario (test A/B)
 
@@ -82,7 +85,7 @@ Serve [uv](https://docs.astral.sh/uv/). Dalla cartella del bot:
 
 ```bash
 uv sync                                                   # installa tutto in .venv
-uv run pytest -q                                          # 101 test, nessuna rete
+uv run pytest -q                                          # 118 test, nessuna rete
 MODELLO_FINTO=si uv run python main.py --modo prova_offline           # 4 domande finte, nessuna rete
 MODELLO_FINTO=si uv run python main.py --modo prova_offline --guasto  # una fonte di ricerca che non risponde
 ```
@@ -107,7 +110,7 @@ Prezzi per milione di token: Opus 5.5 4 $ in ingresso e 20 $ in uscita, Sonnet 5
 |---|---|
 | Previsioni: 3 Opus + 2 Sonnet (v1 misurata: 0,30 $ in 10 chiamate su 2 domande) oppure 2 Opus + 2 GPT-5.6 + 2 Gemini | 0,30-0,38 $ |
 | Ricerca web, 2 giri da 3 ricerche (v1 misurata: 0,10 $ a giro) | 0,15-0,20 $ |
-| Abbinamento mercati, scelta della serie, analisi di cosa manca (Haiku) | < 0,01 $ |
+| Query e abbinamento dei mercati, scelta della serie, analisi di cosa manca (Haiku) | < 0,01 $ |
 | Fonte di risoluzione, mercati, serie storiche, AskNews | 0 $ |
 | **Totale** | **circa 0,45-0,55 $** (le prime 2 domande vere della v1 sono costate 0,30 e 0,39 $) |
 

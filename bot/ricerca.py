@@ -144,10 +144,15 @@ class Ricercatore:
     def _mercati_predefiniti(self):
         if self.imp.modello_finto or not self.imp.mercati:
             return None
-        from bot.fonti.mercati import evidenza_mercati
+        from bot.fonti.mercati import cerca_tutti, evidenza_mercati, piattaforme_attive
+
+        piattaforme = piattaforme_attive(kalshi=self.imp.kalshi)
+
+        async def cerca(query: list[str]):
+            return await cerca_tutti(query, piattaforme)
 
         async def mercati(domanda: MetaculusQuestion) -> str | None:
-            return await evidenza_mercati(domanda, self.modello_riassunto)
+            return await evidenza_mercati(domanda, self.modello_riassunto, cerca=cerca)
 
         return mercati
 

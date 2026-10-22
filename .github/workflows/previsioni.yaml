@@ -54,6 +54,7 @@ jobs:
           # Interruttori delle fonti v2 (accese se vuote; "no" per spegnere).
           FONTE_RISOLUZIONE: ${{ vars.FONTE_RISOLUZIONE }}
           MERCATI: ${{ vars.MERCATI }}
+          KALSHI: ${{ vars.KALSHI }}
           SERIE_STORICHE: ${{ vars.SERIE_STORICHE }}
       - name: Salva il registro delle spese e delle previsioni
         if: always()

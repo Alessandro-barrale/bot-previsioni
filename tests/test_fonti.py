@@ -159,8 +159,73 @@ def test_proiezione_hazard():
 
 
 def test_parole_chiave():
-    chiavi = mk.parole_chiave("Will the European Central Bank cut its deposit facility rate at its December 2026 meeting?")
-    assert chiavi[:3] == ["european", "central", "bank"] and "will" not in chiavi and len(chiavi) <= 6
+    # Nomi propri prima; con almeno 2 nomi propri bastano loro (Manifold vuole tutte le parole del termine).
+    assert mk.parole_chiave("Will the European Central Bank cut its deposit facility rate at its December 2026 meeting?") == [
+        "European", "Central", "Bank"
+    ]
+    # Gli accenti si tolgono invece di spezzare la parola: prima "El Niño" diventava "Ni" e spariva.
+    assert mk.parole_chiave("Will the August-October 2026 El Niño index be 2.10°C or higher?") == ["El", "Nino"]
+    nevada = mk.parole_chiave(
+        'Will "None of These Candidates" receive more votes than the winning margin in the 2026 Nevada gubernatorial election?'
+    )
+    assert "Nevada" in nevada and len(nevada) <= 3 and not {"None", "These", "receive", "more"} & set(nevada)
+    # Un solo nome proprio: si aggiungono le parole più lunghe; senza nomi propri solo quelle, al massimo 3.
+    assert mk.parole_chiave("Will Bitcoin close above $150,000 on December 31, 2026?") == ["Bitcoin", "close"]
+    assert mk.parole_chiave("will the unemployment rate exceed five percent?") == ["unemployment", "rate", "five"]
+    assert mk.parole_chiave("") == []
+
+
+def test_senza_accenti_e_query_pulite():
+    assert mk.senza_accenti("El Niño, São Paulo, Zürich, Straße, Łódź") == "El Nino, Sao Paulo, Zurich, Strasse, Lodz"
+    assert mk.pulisci_query("  “El Niño” 3.4 index!! extra words ") == "El Nino 3.4 index"
+    assert mk.pulisci_query(None) == "" and mk.pulisci_query(42) == ""
+
+
+class _ModelloFisso:
+    """Risponde sempre lo stesso testo (o solleva l'eccezione data) e ricorda i prompt."""
+
+    def __init__(self, risposta):
+        self.risposta = risposta
+        self.prompt = []
+
+    async def invoke(self, prompt):
+        self.prompt.append(prompt)
+        if isinstance(self.risposta, BaseException):
+            raise self.risposta
+        return self.risposta
+
+
+def _domanda_el_nino():
+    domanda = domande_di_prova()[0]
+    domanda.question_text = "Will the August-October 2026 El Niño index be 2.10°C or higher?"
+    domanda.resolution_criteria = "Resolves Yes if NOAA CPC reports an ASO 2026 ONI value of 2.10°C or higher."
+    return domanda
+
+
+async def test_query_dal_modello_pulite():
+    domanda = _domanda_el_nino()
+    fisso = _ModelloFisso(
+        'Here you go:\n```json\n{"queries": ["El Niño", "  ENSO  ", "el nino", "Nino 3.4 index anomaly forecast", "fourth"]}\n```'
+    )
+    assert await mk.query_di_ricerca(domanda, fisso) == ["El Nino", "ENSO", "Nino 3.4 index anomaly"]
+    assert len(fisso.prompt) == 1
+    assert fisso.prompt[0].startswith("QUERY_MERCATI") and "El Niño index" in fisso.prompt[0] and "ASO 2026 ONI" in fisso.prompt[0]
+
+
+async def test_query_riserva_senza_modello():
+    from bot.spese import TettoSuperato
+
+    domanda = _domanda_el_nino()
+    for risposta in ("no JSON at all", '```json\n{"queries": []}\n```', '{"queries": "  "}', RuntimeError("modello giù")):
+        assert await mk.query_di_ricerca(domanda, _ModelloFisso(risposta)) == ["El Nino"]
+    with pytest.raises(TettoSuperato):
+        await mk.query_di_ricerca(domanda, _ModelloFisso(TettoSuperato("tetto per domanda superato")))
+
+
+async def test_query_costo_nel_registro(modello):
+    assert await mk.query_di_ricerca(domande_di_prova()[0], modello) == ["European Central Bank", "ECB rate cut"]
+    righe = modello._registro.interroga("SELECT scopo, modello, costo FROM chiamate")
+    assert len(righe) == 1 and righe[0][0] == "riassunto" and righe[0][1] == "finto/claude-haiku-5-5" and righe[0][2] > 0
 
 
 def _mercato(volume, prezzo=0.4, giorni=60, piattaforma="Polymarket"):
@@ -174,13 +239,15 @@ async def test_evidenza_mercati_pesata_e_proiettata(modello, caplog):
     domanda = domande_di_prova()[0]  # risolve tra 60 giorni
     candidati = [_mercato(250_000, 0.4, giorni=120), _mercato(800, 0.9, piattaforma="Manifold (play money)")]
 
-    async def cerca(termine):
-        assert "european" in termine
+    async def cerca(query):
+        assert query == ["European Central Bank", "ECB rate cut"]  # le query scritte dal modello finto
         return candidati
 
     testo = await mk.evidenza_mercati(domanda, modello, cerca=cerca)
     assert testo.startswith("Prediction markets")
     assert "Mercati: 2 candidati, 1 abbinati (0 same, 1 related)" in [r.getMessage() for r in caplog.records]
+    # Due chiamate al modello economico, tutte e due nel registro: query e abbinamento.
+    assert modello._registro.interroga("SELECT COUNT(*) FROM chiamate WHERE scopo='riassunto'")[0][0] == 2
     # Il modello finto abbina solo il candidato 1 come "related": niente proiezione (solo per "same").
     assert "match: related" in testo and "Evidence: strong (liquidity weight 1.00)" in testo
     assert "Manifold" not in testo
@@ -190,13 +257,17 @@ async def test_evidenza_mercati_pesata_e_proiettata(modello, caplog):
     assert "negligible" in riga_sottile and "Projected" not in riga_sottile
 
 
-async def test_evidenza_mercati_senza_candidati_o_senza_abbinamenti(modello):
+async def test_evidenza_mercati_senza_candidati_o_senza_abbinamenti(modello, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="bot.fonti.mercati")
     domanda = domande_di_prova()[0]
 
-    async def vuota(termine):
+    async def vuota(query):
         return []
 
     assert await mk.evidenza_mercati(domanda, modello, cerca=vuota) is None
+    assert "Mercati: nessun candidato per 'European Central Bank | ECB rate cut'" in [r.getMessage() for r in caplog.records]
 
     class Confuso(LlmFinto):
         async def _chiama(self, prompt):
@@ -219,23 +290,178 @@ def test_lettura_piattaforme(monkeypatch):
         "polymarket": {"events": [{"title": "ECB December", "endDate": "2026-12-20T00:00:00Z", "slug": "ecb", "volume": 9000,
                                    "markets": [{"question": "Cut in December?", "outcomePrices": "[\"0.35\", \"0.65\"]", "outcomes": "[\"Yes\", \"No\"]", "volumeNum": 120000.0, "endDate": "2026-12-18T00:00:00Z", "slug": "ecb-cut", "closed": False},
                                                {"question": "closed one", "closed": True}]}]},
-        "kalshi": {"markets": [{"ticker": "ECB-26DEC", "event_ticker": "ECB", "title": "European Central Bank rate decision", "yes_sub_title": "Cut", "last_price": 31, "volume": 4200, "close_time": "2026-12-18T12:00:00Z"},
-                               {"ticker": "X", "title": "Something else", "last_price": 50, "volume": 10}]},
     }
+    parametri = {}
 
     def finto_get(url, **params):
         for nome, dati in risposte.items():
             if nome in url:
+                parametri[nome] = params
                 return dati
         raise AssertionError(url)
 
     monkeypatch.setattr(mk, "_get", finto_get)
     m = mk.cerca_manifold("ECB")
     assert len(m) == 1 and m[0].prezzo_si == 0.2 and m[0].chiusura.year == 2027
+    # Il limite di Manifold vale prima del filtro sui binari: se ne chiedono di più.
+    assert parametri["manifold"] == {"term": "ECB", "limit": 20, "filter": "open"}
     p = mk.cerca_polymarket("ECB")
     assert len(p) == 1 and p[0].prezzo_si == 0.35 and p[0].volume_usd == 120000 and p[0].url.endswith("/ecb-cut")
-    k = mk.cerca_kalshi("European Central Bank cut December")
-    assert len(k) == 1 and k[0].prezzo_si == 0.31 and k[0].volume_usd == 4200
+
+
+# --------------------------------------------------------------- Kalshi
+@pytest.fixture
+def kalshi_finto(monkeypatch):
+    """API Kalshi finta: due pagine di eventi con il cursore e i mercati per evento. Restituisce le chiamate fatte."""
+    mk.azzera_cache_kalshi()
+    pagine = [
+        [{"event_ticker": "KXCALCIO-1", "title": "Real Madrid vs Barcelona", "sub_title": "El Clásico"},
+         {"event_ticker": "KXGOVNV-26", "title": "Nevada Governor", "sub_title": "2026"}],
+        [{"event_ticker": "KXENSO-26", "title": "El Niño strength in 2026?", "sub_title": "ONI peak"}],
+    ]
+    mercati = {
+        "KXENSO-26": [
+            {"title": "El Niño strength", "yes_sub_title": "Above 2.5", "last_price": 0, "yes_bid": 10, "yes_ask": 14, "volume": 300},
+            {"title": "El Niño strength", "yes_sub_title": "Above 2.0", "last_price_dollars": "0.2400", "volume_fp": "15000.00",
+             "close_time": "2027-01-15T15:00:00Z"},
+            {"title": "El Niño strength", "yes_sub_title": "Above 3.0", "last_price": 0, "yes_bid": 0, "yes_ask": 100, "volume": 5},
+            {"title": "El Niño strength", "yes_sub_title": "Above 3.5", "last_price": 1, "volume": 1},
+        ],
+        "KXGOVNV-26": [{"title": "Will Joe Lombardo win the Nevada governor race?", "last_price": 62, "volume": 250000}],
+    }
+    chiamate = []
+
+    def finto_get(url, **params):
+        chiamate.append((url.rsplit("/", 1)[-1], params))
+        if url.endswith("/events"):
+            indice = int(params.get("cursor") or 0)
+            return {"events": pagine[indice], "cursor": str(indice + 1) if indice + 1 < len(pagine) else ""}
+        if url.endswith("/markets"):
+            return {"markets": mercati.get(params["event_ticker"], [])}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(mk, "_get", finto_get)
+    yield chiamate
+    mk.azzera_cache_kalshi()
+
+
+def test_kalshi_eventi_a_pagine_e_filtro(kalshi_finto):
+    import time
+
+    k = mk.cerca_kalshi("El Nino")
+    # Due pagine di eventi con il cursore, solo eventi aperti che chiudono oltre le prossime 24 ore.
+    eventi = [p for nome, p in kalshi_finto if nome == "events"]
+    assert len(eventi) == 2 and "cursor" not in eventi[0] and eventi[1]["cursor"] == "1"
+    assert eventi[0]["status"] == "open" and eventi[0]["limit"] == 200 and eventi[0]["min_close_ts"] > time.time() + 80000
+    # "El Clásico" ha solo "el": non basta. Dell'evento El Niño i 3 mercati con più volume, il più scambiato prima.
+    assert [p["event_ticker"] for nome, p in kalshi_finto if nome == "markets"] == ["KXENSO-26"]
+    assert [m.titolo for m in k] == ["El Niño strength Above 2.0", "El Niño strength Above 2.5", "El Niño strength Above 3.0"]
+    assert k[0].prezzo_si == pytest.approx(0.24) and k[0].volume_usd == 15000 and k[0].chiusura.year == 2027
+    assert k[1].prezzo_si == pytest.approx(0.12)  # mai scambiato: punto medio della forbice stretta
+    assert k[2].prezzo_si is None  # forbice 0-100: nessun prezzo
+    assert k[0].url == "https://kalshi.com/markets/KXENSO-26"
+    # La lista degli eventi si scarica una volta sola per il giro.
+    g = mk.cerca_kalshi("Nevada governor")
+    assert len([1 for nome, _ in kalshi_finto if nome == "events"]) == 2
+    assert len(g) == 1 and g[0].prezzo_si == pytest.approx(0.62) and g[0].volume_usd == 250000
+    assert mk.cerca_kalshi("Swiss drought") == [] and mk.cerca_kalshi("the will") == []
+
+
+def test_kalshi_prezzi_e_punteggio():
+    assert mk.prezzo_kalshi({"last_price_dollars": "0.3100", "last_price": 99}) == pytest.approx(0.31)
+    assert mk.prezzo_kalshi({"last_price": 31}) == pytest.approx(0.31)
+    assert mk.prezzo_kalshi({"last_price": 0, "yes_bid_dollars": "0.40", "yes_ask_dollars": "0.44"}) == pytest.approx(0.42)
+    assert mk.prezzo_kalshi({"last_price": 0, "yes_bid": 20, "yes_ask": 60}) is None
+    assert mk.prezzo_kalshi({"last_price_dollars": "31"}) is None and mk.prezzo_kalshi({}) is None
+    evento = {"title": "Nevada Governor Election", "sub_title": "Winner"}
+    assert mk.punteggio_evento(["nevada", "governor"], evento) == 1.0
+    assert mk.punteggio_evento(["nevada", "senate"], evento) == 0.0
+    assert mk.punteggio_evento(["nevada", "governor", "lombardo"], evento) == pytest.approx(2 / 3)
+    assert mk.punteggio_evento(["nevada", "candidates", "lombardo"], evento) == 0.0
+
+
+def test_kalshi_guasto_non_riprova_subito(monkeypatch):
+    mk.azzera_cache_kalshi()
+    chiamate = []
+
+    def rotto(url, **params):
+        chiamate.append(url)
+        raise ConnectionError("kalshi giù")
+
+    monkeypatch.setattr(mk, "_get", rotto)
+    with pytest.raises(ConnectionError):
+        mk.cerca_kalshi("El Nino")
+    assert mk.cerca_kalshi("Nevada governor") == [] and len(chiamate) == 1
+    mk.azzera_cache_kalshi()
+
+
+def test_kalshi_filtro_chiusura_rifiutato(monkeypatch):
+    import requests
+
+    mk.azzera_cache_kalshi()
+    chiamate = []
+
+    def finto_get(url, **params):
+        chiamate.append(dict(params))
+        if url.endswith("/events"):
+            if "min_close_ts" in params:
+                risposta = requests.Response()
+                risposta.status_code = 400
+                raise requests.HTTPError("400 Bad Request", response=risposta)
+            return {"events": [{"event_ticker": "KXENSO-26", "title": "El Nino in 2026?"}], "cursor": ""}
+        return {"markets": [{"title": "El Nino in 2026?", "last_price": 40, "volume": 2000}]}
+
+    monkeypatch.setattr(mk, "_get", finto_get)
+    k = mk.cerca_kalshi("El Nino")
+    assert len(k) == 1 and k[0].prezzo_si == pytest.approx(0.40)
+    assert "min_close_ts" in chiamate[0] and "min_close_ts" not in chiamate[1]
+    mk.azzera_cache_kalshi()
+
+
+def test_interruttore_kalshi(monkeypatch):
+    from bot.config import Impostazioni
+
+    monkeypatch.delenv("KALSHI", raising=False)
+    assert Impostazioni.da_ambiente().kalshi is True
+    monkeypatch.setenv("KALSHI", "no")
+    assert Impostazioni.da_ambiente().kalshi is False
+    assert list(mk.piattaforme_attive()) == ["Manifold", "Polymarket", "Kalshi"]
+    assert list(mk.piattaforme_attive(kalshi=False)) == ["Manifold", "Polymarket"]
+
+
+async def test_ricercatore_usa_le_piattaforme_attive(monkeypatch, modello):
+    from bot.config import Impostazioni
+    from bot.ricerca import Ricercatore
+
+    viste = []
+
+    async def finta(query, piattaforme=None):
+        viste.append((query, list(piattaforme)))
+        return []
+
+    monkeypatch.setattr(mk, "cerca_tutti", finta)
+    r = Ricercatore(Impostazioni(kalshi=False), modello._registro, modello, modello, cerca_web=None, cerca_notizie=None)
+    assert await r._mercati(domande_di_prova()[0]) is None
+    assert viste == [(["European Central Bank", "ECB rate cut"], ["Manifold", "Polymarket"])]
+
+
+async def test_cerca_tutti_piu_query_senza_doppioni(caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="bot.fonti.mercati")
+
+    def piattaforma(nome):
+        def cerca(termine):
+            comune = mk.Mercato(nome, "Comune", 0.5, 2000, None, f"https://{nome}/comune")
+            return [comune] + [mk.Mercato(nome, f"{termine} {i}", 0.5, 2000, None, f"https://{nome}/{termine}/{i}") for i in range(4)]
+
+        return cerca
+
+    trovati = await mk.cerca_tutti(["El Nino", "ENSO"], {"A": piattaforma("A"), "B": piattaforma("B")})
+    # Al massimo 5 per piattaforma, a turno tra le query, il mercato trovato da tutte e due una volta sola.
+    assert [m.titolo for m in trovati if m.piattaforma == "A"] == ["Comune", "El Nino 0", "ENSO 0", "El Nino 1", "ENSO 1"]
+    assert len(trovati) == 10
+    assert "Mercati per 'El Nino | ENSO': 10 trovati (A 5, B 5)" in [r.getMessage() for r in caplog.records]
 
 
 async def test_cerca_tutti_una_piattaforma_guasta(caplog):
@@ -252,6 +478,10 @@ async def test_cerca_tutti_una_piattaforma_guasta(caplog):
     trovati = await mk.cerca_tutti("x", {"A": ok, "B": rotta})
     assert len(trovati) == 1
     assert "Mercati per 'x': 1 trovati (A 1, B 0)" in [r.getMessage() for r in caplog.records]
+    # Con più query la piattaforma guasta lascia un avviso solo, non uno per query.
+    caplog.clear()
+    await mk.cerca_tutti(["x", "y", "z"], {"A": ok, "B": rotta})
+    assert [r.getMessage() for r in caplog.records if r.levelname == "WARNING"] == ["Mercati B non letti: ConnectionError: "]
 
 
 # ---------------------------------------------------------- serie storiche
