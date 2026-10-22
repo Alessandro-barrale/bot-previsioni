@@ -1,13 +1,18 @@
 name: Previsioni (torneo stagionale + MiniBench)
 
-# Ogni ora al minuto 17 (le domande restano aperte 1,5-3 ore). Un giro senza
-# domande nuove dura meno di un minuto, che GitHub conta come 1 minuto:
-# 24 x 30 = 720 minuti al mese, più il tempo delle domande vere, dentro i 2.000
-# gratuiti. Il calcolo completo è nel README.
+# Chi sveglia il bot (vedi SVEGLIA.md):
+# 1. cron-job.org ogni 30 minuti (workflow_dispatch): e' la sveglia principale,
+#    perche' GitHub esegue il suo cron quando vuole (3 giri in 14 ore il 21/10).
+# 2. Il PC dell'utente (sveglia_bot.ps1, ogni 10 minuti) solo se l'ultimo giro
+#    e' piu' vecchio di 25 minuti.
+# 3. Il cron di GitHub qui sotto, ogni 6 ore, come ultima riserva.
+# Conto dei minuti (repo privato, 2.000 gratuiti al mese, ogni giro vale almeno
+# 1 minuto): 48 giri al giorno x 30 = 1.440, piu' 120 del cron, piu' il tempo
+# delle domande vere (2-3 minuti l'una): circa 1.850 al mese.
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "17 */6 * * *"
 
 # Lo stesso gruppo per tutti i workflow che scrivono nel registro: mai due giri insieme.
 concurrency:

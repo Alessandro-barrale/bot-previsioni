@@ -179,3 +179,6 @@ temp/
 .venv/
 *.sqlite-journal
 upstream/__pycache__/
+
+# Diario della sveglia dal PC (solo locale)
+dati/sveglia.log
