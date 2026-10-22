@@ -191,7 +191,7 @@ class BotPrevisioni(FallTemplateBot2026):
         kwargs.setdefault("enable_summarize_research", False)  # risparmia una chiamata per domanda
         kwargs.setdefault("skip_previously_forecasted_questions", True)
         kwargs.setdefault("extra_metadata_in_explanation", True)
-        kwargs.setdefault("required_successful_predictions", 0.6)  # almeno 3 su 5
+        kwargs.setdefault("required_successful_predictions", 0.5)  # almeno 3 su 5, 3 su 6: un vendor può cadere
         super().__init__(
             publish_reports_to_metaculus=impostazioni.invia_previsioni,
             llms={

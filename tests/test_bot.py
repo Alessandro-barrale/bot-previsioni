@@ -259,3 +259,69 @@ def test_interruttori_e_tetti_v2(monkeypatch):
     imp = Impostazioni.da_ambiente()
     assert imp.mercati is False and imp.fonte_risoluzione is True
     r = Ricercatore(imp, Registro(":memory:", 1, 1, 1) if False else None, None, None, cerca_web=web_ok, cerca_notizie=notizie_ok) if False else None
+
+
+# ------------------------------------------------------------ roster a 3 vendor
+def test_roster_tre_vendor_con_openrouter(monkeypatch):
+    from bot.llm import parametri_modello
+
+    for nome in ("MODELLI_PREVISIONE", "PREVISIONI_PER_DOMANDA", "MODELLO_FINTO", "ROSTER_3_VENDOR", "MODELLO_OPENAI",
+                 "MODELLO_GOOGLE", "EFFORT_PREVISIONE", "EFFORT_ANTHROPIC"):
+        monkeypatch.delenv(nome, raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "chiave-finta")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "chiave-finta")
+    imp = Impostazioni.da_ambiente()
+    assert imp.modelli_previsione == [
+        "anthropic/claude-opus-5-5", "openrouter/openai/gpt-5.6-sol", "openrouter/google/gemini-3.7-flash",
+    ]
+    assert imp.previsioni_per_domanda == 6
+    assert parametri_modello("openrouter/openai/gpt-5.6-sol", "previsione") == {"reasoning_effort": "high"}
+    assert parametri_modello("openrouter/google/gemini-3.7-flash", "previsione") == {"reasoning_effort": "high"}
+    assert parametri_modello("anthropic/claude-opus-5-5", "previsione") == {}
+    assert parametri_modello("openrouter/openai/gpt-5.6-sol", "riassunto") == {}
+    monkeypatch.setenv("EFFORT_ANTHROPIC", "high")
+    assert parametri_modello("openrouter/anthropic/claude-opus-5.5", "previsione") == {"reasoning_effort": "high"}
+
+    monkeypatch.setenv("MODELLO_GOOGLE", "google/gemini-4-argon")
+    monkeypatch.setenv("ROSTER_3_VENDOR", "no")
+    imp = Impostazioni.da_ambiente()
+    assert imp.modelli_previsione == ["anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5"]
+    assert imp.previsioni_per_domanda == 5
+    monkeypatch.delenv("ROSTER_3_VENDOR")
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    imp = Impostazioni.da_ambiente()
+    assert imp.modelli_previsione[0] == "openrouter/anthropic/claude-opus-5.5"
+    assert imp.modelli_previsione[2] == "openrouter/google/gemini-4-argon"
+
+
+def test_crea_llm_senza_verbosity_con_effort(monkeypatch, tmp_path):
+    from bot.llm import crea_llm
+
+    monkeypatch.delenv("EFFORT_PREVISIONE", raising=False)
+    monkeypatch.delenv("EFFORT_ANTHROPIC", raising=False)
+    registro = Registro(tmp_path / "r.sqlite", 1, 1, 1)
+    llm = crea_llm("openrouter/anthropic/claude-opus-5.5", registro, "previsione", finto=False, verbosity="high")
+    assert "verbosity" not in llm.litellm_kwargs and "reasoning_effort" not in llm.litellm_kwargs
+    llm = crea_llm("openrouter/openai/gpt-5.6-sol", registro, "previsione", finto=False)
+    assert llm.litellm_kwargs["reasoning_effort"] == "high" and "verbosity" not in llm.litellm_kwargs
+    assert llm.litellm_kwargs["temperature"] is None
+    registro.chiudi()
+
+
+async def test_rotazione_su_tre_modelli_sei_campioni(tmp_path):
+    LlmCheRegistraPrompt.prompt_visti = []
+    imp = Impostazioni(modello_finto=True, modelli_previsione=["finto/a", "finto/b", "finto/c"], previsioni_per_domanda=6,
+                       modello_ricerca="finto/r", modello_riassunto="finto/s", percorso_registro=tmp_path / "r.sqlite")
+    registro = Registro(imp.percorso_registro, imp.tetto_domanda, imp.tetto_giorno, imp.tetto_mese)
+    modelli = [LlmCheRegistraPrompt(model=m, registro=registro, scopo="previsione", seme=i) for i, m in enumerate(imp.modelli_previsione)]
+    ricerca = LlmFinto(model=imp.modello_ricerca, registro=registro, scopo="ricerca")
+    riassunto = LlmFinto(model=imp.modello_riassunto, registro=registro, scopo="riassunto")
+    ricercatore = Ricercatore(imp, registro, ricerca, riassunto, cerca_web=web_ok, cerca_notizie=notizie_ok,
+                              fonte_risoluzione=fonte_ok, mercati=mercati_ok, serie_storiche=serie_ok)
+    bot = BotPrevisioni(impostazioni=imp, registro=registro, modelli_previsione=modelli, modello_ricerca=ricerca,
+                        modello_riassunto=riassunto, ricercatore=ricercatore, torneo="prova")
+    rapporti = await bot.forecast_questions(domande_di_prova()[:1], return_exceptions=True)
+    assert not isinstance(rapporti[0], BaseException)
+    conteggi = dict(registro.interroga("SELECT modello, COUNT(*) FROM chiamate WHERE scopo='previsione' GROUP BY modello"))
+    assert conteggi == {"finto/a": 2, "finto/b": 2, "finto/c": 2}
+    assert sum("OUTSIDE VIEW" in p for p in LlmCheRegistraPrompt.prompt_visti) == 3

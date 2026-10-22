@@ -9,6 +9,7 @@ calcolato con i prezzi veri resta una stima realistica.
 """
 from __future__ import annotations
 
+import os
 import random
 import re
 from datetime import datetime, timezone
@@ -146,7 +147,29 @@ def _valore(testo: str, data: bool) -> float:
     return float(testo)
 
 
+def parametri_modello(modello: str, scopo: str) -> dict:
+    """
+    Parametri extra per fornitore. Previsioni con effort alto (EFFORT_PREVISIONE,
+    predefinito "high") sui modelli OpenAI e Google via OpenRouter; sui modelli
+    Anthropic solo se EFFORT_ANTHROPIC è impostato (oggi girano senza, e il
+    costo del ragionamento esteso non è ancora misurato). Mai `verbosity`
+    insieme a `reasoning_effort` su Anthropic via OpenRouter: vincerebbe
+    verbosity e l'effort dichiarato non si applicherebbe.
+    """
+    if scopo != "previsione":
+        return {}
+    anthropic = "claude" in modello or "anthropic" in modello
+    effort = (os.getenv("EFFORT_ANTHROPIC") if anthropic else os.getenv("EFFORT_PREVISIONE", "high")) or ""
+    effort = effort.strip().lower()
+    if effort in {"", "no", "none", "off"}:
+        return {}
+    return {"reasoning_effort": effort}
+
+
 def crea_llm(modello: str, registro: Registro, scopo: str, finto: bool, **kwargs) -> LlmRegistrato:
     if finto or modello.startswith("finto/"):
         return LlmFinto(model=modello, registro=registro, scopo=scopo, **kwargs)
+    for chiave, valore in parametri_modello(modello, scopo).items():
+        kwargs.setdefault(chiave, valore)
+    kwargs.pop("verbosity", None)
     return LlmRegistrato(model=modello, registro=registro, scopo=scopo, **kwargs)

@@ -24,6 +24,13 @@ PREZZI_PER_MILIONE: dict[str, tuple[float, float]] = {
     "sonnet-5.5": (2.00, 10.00),
     "haiku-5-5": (0.10, 0.50),
     "haiku-5.5": (0.10, 0.50),
+    # OpenRouter, listino letto da /api/v1/models il 22/10/2026
+    "gpt-5.6-sol": (4.00, 20.00),
+    "gpt-6.1-sol": (2.00, 10.00),
+    "gpt-6-sol": (2.00, 10.00),
+    "gemini-3.7-flash": (0.75, 3.75),
+    "gemini-4-argon": (2.00, 10.00),
+    "gemini-3.5-flash": (1.50, 9.00),
 }
 PREZZO_PREDEFINITO = (5.00, 25.00)  # modello sconosciuto: stima prudente
 COSTO_RICERCA_WEB = 0.01  # 10 $ ogni 1.000 ricerche

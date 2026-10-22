@@ -87,13 +87,15 @@ class Impostazioni:
         finto = _si("MODELLO_FINTO")
         modelli = _lista("MODELLI_PREVISIONE") or _modelli_predefiniti(finto)
         percorso = os.getenv("PERCORSO_REGISTRO")
+        # Con 3 vendor si fanno 2 campioni ciascuno (6); con 2 modelli Claude 3 + 2 (5).
+        campioni_predefiniti = 6 if len(modelli) == 3 else 5
         return cls(
             invia_previsioni=_si("INVIA_PREVISIONI"),
             modello_finto=finto,
             modelli_previsione=modelli,
             modello_ricerca=os.getenv("MODELLO_RICERCA") or _modello_ricerca_predefinito(finto),
             modello_riassunto=os.getenv("MODELLO_RIASSUNTO") or _modello_riassunto_predefinito(finto),
-            previsioni_per_domanda=_int("PREVISIONI_PER_DOMANDA", 5),
+            previsioni_per_domanda=_int("PREVISIONI_PER_DOMANDA", campioni_predefiniti),
             giri_ricerca=_int("GIRI_RICERCA", 2),
             ricerche_web_per_giro=_int("RICERCHE_WEB_PER_GIRO", 3),
             fonte_risoluzione=_acceso("FONTE_RISOLUZIONE"),
@@ -128,12 +130,29 @@ def _nome_claude(modello: str) -> str:
     return f"metaculus/{modello}"
 
 
+# Roster a 3 vendor (uno per fornitore, come i bot vincenti), usato quando c'è
+# OPENROUTER_API_KEY. Nomi verificati su https://openrouter.ai/api/v1/models il
+# 22/10/2026: openai/gpt-5.6-sol (4/20 $ per milione di token), google/gemini-3.7-flash
+# (0,75/3,75 $). Esistono anche openai/gpt-6.1-sol e google/gemini-4-argon
+# (2/10 $): si scelgono con MODELLO_OPENAI e MODELLO_GOOGLE.
+MODELLO_OPENAI_PREDEFINITO = "openai/gpt-5.6-sol"
+MODELLO_GOOGLE_PREDEFINITO = "google/gemini-3.7-flash"
+
+
+def roster_tre_vendor_attivo() -> bool:
+    return chiave_presente("OPENROUTER_API_KEY") and _acceso("ROSTER_3_VENDOR")
+
+
 def _modelli_predefiniti(finto: bool) -> list[str]:
     if finto:
         return ["finto/claude-opus-5-5", "finto/claude-sonnet-5-5"]
+    if roster_tre_vendor_attivo():
+        return [
+            _nome_claude("claude-opus-5-5"),
+            "openrouter/" + (os.getenv("MODELLO_OPENAI") or MODELLO_OPENAI_PREDEFINITO).removeprefix("openrouter/"),
+            "openrouter/" + (os.getenv("MODELLO_GOOGLE") or MODELLO_GOOGLE_PREDEFINITO).removeprefix("openrouter/"),
+        ]
     # Due modelli diversi: con 5 previsioni la rotazione fa 3 Opus + 2 Sonnet.
-    # Un terzo fornitore (per esempio un modello OpenAI via OpenRouter) si
-    # aggiunge con MODELLI_PREVISIONE, vedi README.
     return [_nome_claude("claude-opus-5-5"), _nome_claude("claude-sonnet-5-5")]
 
 
