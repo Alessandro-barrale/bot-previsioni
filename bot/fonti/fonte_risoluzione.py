@@ -17,6 +17,8 @@ from email.utils import parsedate_to_datetime
 
 import requests
 
+from bot.fonti import fred
+
 logger = logging.getLogger(__name__)
 
 TIMEOUT = 15
@@ -27,13 +29,29 @@ ESTENSIONI_SALTATE = (".pdf", ".png", ".jpg", ".jpeg", ".gif", ".zip", ".xls", "
 DOMINI_SALTATI = ("metaculus.com", "twitter.com", "x.com", "facebook.com", "youtube.com", "instagram.com", "t.me")
 INTESTAZIONI = {"User-Agent": "Mozilla/5.0 (compatible; bot-previsioni/2.0; forecasting research)", "Accept-Language": "en"}
 
-_URL = re.compile(r"https?://[^\s<>\"'\)\]\}]+", flags=re.IGNORECASE)
+# Le parentesi tonde restano nell'URL (Wikipedia: "Electoral_College_(United_States)"); si bilanciano dopo.
+_URL = re.compile(r"https?://[^\s<>\"'\]\}]+", flags=re.IGNORECASE)
+_ESCAPE_MARKDOWN = re.compile(r"\\([^A-Za-z0-9\s])")  # i testi Metaculus sono markdown: "\(", "\_", "\*"...
+_PUNTEGGIATURA_FINALE = ".,;:!?»”\"'"
 _META_DATA = re.compile(
     r"<meta[^>]+(?:property|name)=[\"'](?:article:published_time|article:modified_time|datePublished|dateModified|"
     r"og:updated_time|date|last-modified|pubdate)[\"'][^>]+content=[\"']([^\"']+)[\"']",
     flags=re.IGNORECASE,
 )
 _DATA_ISO = re.compile(r"\b(20[0-9]{2}-[01][0-9]-[0-3][0-9])\b")
+
+
+def rifinisci_url(grezzo: str) -> str:
+    """Toglie gli escape markdown, la punteggiatura finale e le parentesi chiuse non bilanciate."""
+    url = _ESCAPE_MARKDOWN.sub(r"\1", grezzo).replace("&amp;", "&")
+    while url:
+        if url[-1] in _PUNTEGGIATURA_FINALE:
+            url = url[:-1]
+        elif url[-1] == ")" and url.count(")") > url.count("("):
+            url = url[:-1]
+        else:
+            break
+    return url
 
 
 def estrai_url(*testi: str | None) -> list[str]:
@@ -43,7 +61,7 @@ def estrai_url(*testi: str | None) -> list[str]:
         if not testo:
             continue
         for grezzo in _URL.findall(testo):
-            url = grezzo.rstrip(".,;:!?)»”\"'").replace("&amp;", "&")
+            url = rifinisci_url(grezzo)
             basso = url.lower()
             if any(d in basso for d in DOMINI_SALTATI) or basso.split("?")[0].endswith(ESTENSIONI_SALTATE):
                 continue
@@ -77,8 +95,17 @@ def _data_pagina(contenuto: str, intestazioni: dict) -> str | None:
     return None
 
 
+def scarica_fred(url: str, timeout: int = TIMEOUT) -> tuple[str, str]:
+    """Le pagine FRED sono vuote senza JavaScript: si legge il CSV pubblico della serie (ultime 12 osservazioni)."""
+    serie = fred.id_da_url(url)
+    osservazioni = fred.scarica_csv(serie, timeout)
+    return fred.descrivi_ultime(serie, osservazioni), osservazioni[-1][0].isoformat()
+
+
 def scarica(url: str, timeout: int = TIMEOUT) -> tuple[str, str | None]:
     """(testo pulito, data della pagina o None). Solleva se la pagina non si legge."""
+    if fred.id_da_url(url):
+        return scarica_fred(url, timeout)
     with requests.get(url, headers=INTESTAZIONI, timeout=timeout, stream=True, allow_redirects=True) as risposta:
         risposta.raise_for_status()
         tipo = (risposta.headers.get("Content-Type") or "").lower()

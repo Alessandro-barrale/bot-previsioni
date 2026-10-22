@@ -5,6 +5,7 @@ import pytest
 
 from bot.domande_prova import domande_di_prova
 from bot.fonti import fonte_risoluzione as fr
+from bot.fonti import fred
 from bot.fonti import mercati as mk
 from bot.fonti import serie_storiche as ss
 from bot.llm import LlmFinto
@@ -31,6 +32,24 @@ def test_estrai_url_pulisce_e_salta():
     ]
 
 
+def test_estrai_url_markdown_metaculus():
+    # I testi Metaculus sono markdown: escape con backslash, link [testo](url), URL tra parentesi.
+    testo = (
+        r"Per https://en.wikipedia.org/wiki/Electoral_College_\(United_States\). "
+        r"See [the index](https://a.example/some\_page\*). Also (https://b.example/x). "
+        "Then https://c.example/y), and https://d.example/z(1)."
+    )
+    assert fr.estrai_url(testo) == [
+        "https://en.wikipedia.org/wiki/Electoral_College_(United_States)",
+        "https://a.example/some_page*",
+        "https://b.example/x",
+        "https://c.example/y",
+        "https://d.example/z(1)",
+    ]
+    assert fr.rifinisci_url("https://x.example/a_(b)).") == "https://x.example/a_(b)"
+    assert fr.rifinisci_url("https://x.example/a?b=1&amp;c=2;") == "https://x.example/a?b=1&c=2"
+
+
 def test_pulisci_html():
     pagina = "<html><head><title>x</title><style>a{}</style></head><body><nav>menu</nav><h1>Rate&nbsp;decision</h1><script>var a=1;</script><p>Held at <b>2.00%</b>.</p></body></html>"
     testo = fr.pulisci_html(pagina)
@@ -53,6 +72,62 @@ async def test_fonte_risoluzione_limiti_e_guasti():
     assert "https://b.example/two" in testo and "could not be fetched today: ConnectionError" in testo
     assert "c.example" not in testo  # al massimo 2 URL
     assert len(testo) < 6000 + 600
+
+
+CSV_FRED = (
+    "observation_date,UNRATE\n"
+    + "\n".join(f"2025-{m:02d}-01,{4 + m / 10}" for m in range(1, 13))
+    + "\n2026-01-01,.\n2026-02-01,4.4\n"
+)
+
+
+def test_fred_csv_lettura_e_descrizione():
+    assert fred.id_da_url("https://fred.stlouisfed.org/series/CPIAUCSL") == "CPIAUCSL"
+    assert fred.id_da_url("https://fred.stlouisfed.org/series/dgs10#0") == "DGS10"
+    assert fred.id_da_url("https://www.ecb.europa.eu/stats") is None
+    serie = fred.leggi_csv(CSV_FRED)
+    assert len(serie) == 13 and serie[-1] == (date(2026, 2, 1), 4.4)  # "." saltato, intestazione saltata
+    testo = fred.descrivi_ultime("UNRATE", serie)
+    assert testo.startswith("FRED series UNRATE (public CSV, no key). LATEST VALUE: 4.4 on 2026-02-01.")
+    assert "Last 12 observations" in testo and "- 2026-02-01: 4.4" in testo and "- 2025-01-01" not in testo
+    assert "- 2025-02-01: 4.2" in testo
+    assert fred.descrivi_ultime("X", []) == "FRED series X: no data."
+
+
+def test_fred_scarica_csv_senza_chiave(monkeypatch):
+    class Risposta:
+        text = CSV_FRED
+
+        def raise_for_status(self):
+            pass
+
+    viste = {}
+
+    def finto_get(url, params=None, headers=None, timeout=None):
+        viste["url"], viste["params"] = url, params
+        return Risposta()
+
+    monkeypatch.setattr(fred.requests, "get", finto_get)
+    serie = fred.scarica_csv("UNRATE")
+    assert viste["url"] == "https://fred.stlouisfed.org/graph/fredgraph.csv" and viste["params"] == {"id": "UNRATE"}
+    assert len(serie) == 13
+
+    Risposta.text = "observation_date,NOPE\n"
+    with pytest.raises(ValueError):
+        fred.scarica_csv("NOPE")
+
+
+def test_scarica_devia_le_pagine_fred_sul_csv(monkeypatch):
+    chiamate = []
+
+    def finto_csv(serie, timeout=None):
+        chiamate.append(serie)
+        return fred.leggi_csv(CSV_FRED)
+
+    monkeypatch.setattr(fred, "scarica_csv", finto_csv)
+    monkeypatch.setattr(fr.requests, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("niente HTML per FRED")))
+    testo, data = fr.scarica("https://fred.stlouisfed.org/series/UNRATE")
+    assert chiamate == ["UNRATE"] and data == "2026-02-01" and "LATEST VALUE: 4.4" in testo
 
 
 async def test_fonte_risoluzione_assente_o_tutta_guasta():
@@ -202,6 +277,29 @@ async def test_serie_storiche_yahoo_senza_fred(modello, monkeypatch):
     testo = await ss.serie_storiche(domanda, modello, scarica_fred_=fred, scarica_yahoo_=yahoo)
     assert chiamate == ["BZ=F"] and "Historical data series" in testo and "Yahoo Finance BZ=F" in testo
     assert "Brent front-month future" in testo
+
+
+async def test_serie_storiche_fred_csv_senza_chiave(modello, monkeypatch):
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
+
+    class ConFred(LlmFinto):
+        async def _chiama(self, prompt):
+            r = await super()._chiama(prompt)
+            assert "FRED series id" in prompt  # FRED si chiede sempre: senza chiave c'è il CSV pubblico
+            return r.model_copy(update={"data": '{"fred_series_id": "DCOILBRENTEU", "yahoo_ticker": null}'})
+
+    m = ConFred(model="finto/claude-haiku-5-5", registro=modello._registro, scopo="riassunto")
+    chiamate = []
+
+    def csv_(serie):
+        chiamate.append(serie)
+        return _serie(50)
+
+    def api(serie, chiave):
+        raise AssertionError("l'API FRED non va chiamata senza chiave")
+
+    testo = await ss.serie_storiche(domande_di_prova()[1], m, scarica_fred_=api, scarica_fred_csv_=csv_)
+    assert chiamate == ["DCOILBRENTEU"] and "FRED series DCOILBRENTEU (public CSV)" in testo and "latest value" in testo
 
 
 async def test_serie_storiche_fred_con_chiave_e_guasti(modello, monkeypatch):

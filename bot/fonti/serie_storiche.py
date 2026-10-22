@@ -1,6 +1,7 @@
 """
-Serie storiche per le domande numeriche: FRED (solo con FRED_API_KEY) e
-Yahoo Finance (endpoint "chart", lo stesso che usa yfinance, senza dipendenze).
+Serie storiche per le domande numeriche: FRED (API con FRED_API_KEY, altrimenti
+il CSV pubblico senza chiave) e Yahoo Finance (endpoint "chart", lo stesso che
+usa yfinance, senza dipendenze).
 
 Un modello economico indica la serie (id FRED o ticker Yahoo); si scaricano
 gli ultimi valori e si calcolano le variazioni su finestre lunghe quanto il
@@ -22,6 +23,7 @@ from datetime import date, datetime, timedelta, timezone
 import requests
 
 from bot import combina
+from bot.fonti import fred
 
 logger = logging.getLogger(__name__)
 
@@ -121,16 +123,13 @@ def descrivi(serie: list[Osservazione], nome: str, orizzonte_giorni: int, unita:
 
 
 # ------------------------------------------------------------- orchestrazione
-def _prompt_serie(domanda, fred_disponibile: bool) -> str:
-    fred = (
-        'the FRED series id (for example "CPIAUCSL", "UNRATE", "DGS10") if an official statistic fits, '
-        if fred_disponibile
-        else "null for fred_series_id (FRED is not available), "
-    )
+def _prompt_serie(domanda) -> str:
+    # FRED si chiede sempre: con la chiave si usa l'API, senza il CSV pubblico.
     return (
         "SERIE_STORICHE\n"
         "Name the ONE data series that the question below will be resolved from, or the closest proxy with "
-        "daily or monthly data. Give " + fred + 'and the Yahoo Finance ticker (for example "BZ=F" for Brent, "^GSPC", '
+        'daily or monthly data. Give the FRED series id (for example "CPIAUCSL", "UNRATE", "DGS10") if an '
+        'official statistic fits, and the Yahoo Finance ticker (for example "BZ=F" for Brent, "^GSPC", '
         '"BTC-USD", "EURUSD=X") if a traded price fits. Use null when nothing fits; do not guess identifiers you '
         "are not sure exist.\n\n"
         f"Question: {domanda.question_text}\nResolution criteria: {domanda.resolution_criteria}\n"
@@ -148,15 +147,18 @@ def _pulisci_id(valore) -> str | None:
     return valore
 
 
-async def serie_storiche(domanda, modello, scarica_fred_=scarica_fred, scarica_yahoo_=scarica_yahoo) -> str | None:
+async def serie_storiche(
+    domanda, modello, scarica_fred_=scarica_fred, scarica_yahoo_=scarica_yahoo, scarica_fred_csv_=fred.scarica_csv
+) -> str | None:
     """Sezione del briefing con le serie storiche, o None se nessuna serie è stata trovata."""
     chiave_fred = os.getenv("FRED_API_KEY", "").strip()
-    fred_disponibile = bool(chiave_fred) and chiave_fred.upper() != "REPLACE_ME"
-    risposta = await modello.invoke(_prompt_serie(domanda, fred_disponibile))
+    con_chiave = bool(chiave_fred) and chiave_fred.upper() != "REPLACE_ME"
+    risposta = await modello.invoke(_prompt_serie(domanda))
     oggetto = combina.leggi_json_finale(risposta) or {}
-    id_fred = _pulisci_id(oggetto.get("fred_series_id")) if fred_disponibile else None
+    id_fred = _pulisci_id(oggetto.get("fred_series_id"))
     ticker = _pulisci_id(oggetto.get("yahoo_ticker"))
     if not id_fred and not ticker:
+        logger.info("Serie storiche: il modello non ha indicato nessuna serie")
         return None
     adesso = datetime.now(timezone.utc)
     fine = domanda.scheduled_resolution_time or domanda.close_time or adesso
@@ -164,8 +166,10 @@ async def serie_storiche(domanda, modello, scarica_fred_=scarica_fred, scarica_y
     unita = getattr(domanda, "unit_of_measure", None) or ""
     sezioni = []
     compiti = []
-    if id_fred:
+    if id_fred and con_chiave:
         compiti.append((f"FRED series {id_fred}", scarica_fred_, (id_fred, chiave_fred)))
+    elif id_fred:  # senza chiave: il CSV pubblico di FRED
+        compiti.append((f"FRED series {id_fred} (public CSV)", scarica_fred_csv_, (id_fred,)))
     if ticker:
         compiti.append((f"Yahoo Finance {ticker}", scarica_yahoo_, (ticker,)))
     for nome, funzione, argomenti in compiti:
@@ -175,6 +179,7 @@ async def serie_storiche(domanda, modello, scarica_fred_=scarica_fred, scarica_y
                 sezioni.append(descrivi(serie, nome, orizzonte, unita))
         except Exception as errore:
             logger.warning(f"Serie {nome} non letta: {type(errore).__name__}: {errore}")
+    logger.info(f"Serie storiche: {len(sezioni)}/{len(compiti)} serie lette ({', '.join(n for n, _, _ in compiti)})")
     if not sezioni:
         return None
     nota = str(oggetto.get("note") or "").strip()[:200]

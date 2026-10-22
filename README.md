@@ -12,7 +12,7 @@ Le regole vietano di intervenire sulle previsioni: dopo l'attivazione il bot lav
 3. **Ricerca v2**, tutto in parallelo e con ogni fonte che può cadere senza bloccare le altre:
    - la **fonte di risoluzione**: le pagine citate nei criteri e nelle note vengono scaricate (max 2 pagine, 6.000 caratteri), con la data, e messe nel briefing come "cosa dice ORA la fonte";
    - i **mercati di previsione** (Polymarket, Manifold, Kalshi, API pubbliche gratuite): un modello economico decide quali mercati sono davvero sulla stessa domanda, poi il prezzo entra come evidenza pesata per liquidità (0 a 1.000 $ di volume, 4% a 10.000 $, pieno verso 100.000 $) e proiettato alla nostra data;
-   - le **serie storiche** per le domande numeriche: FRED (solo con `FRED_API_KEY`) e Yahoo Finance; ultimi valori e variabilità su finestre lunghe quanto il tempo che resta;
+   - le **serie storiche** per le domande numeriche: FRED (API con `FRED_API_KEY`, altrimenti il CSV pubblico senza chiave) e Yahoo Finance; ultimi valori e variabilità su finestre lunghe quanto il tempo che resta;
    - **AskNews** (con la chiave) e la **ricerca web di Claude**; poi un modello economico elenca cosa manca e si fa un secondo giro web.
 4. **Previsioni indipendenti** con il **prompt v2** (metodo dei bot vincenti): status quo e resolution check prima di tutto, base rate calcolata dai dati e "anchor on your math", regole soft clock / history discharged / null result, domande multi-clausola come prodotto booleano, auto-controllo di calibrazione. Metà dei campioni ragiona dall'**outside view** (classe di riferimento), metà dall'**inside view** (meccanismi), sulla stessa ricerca. Ogni risposta chiude con un blocco JSON obbligatorio (le espressioni regolari restano come riserva).
    - senza OpenRouter: 5 campioni, 3 con Opus 5.5 e 2 con Sonnet 5.5;
@@ -50,7 +50,7 @@ Da quel momento non toccare più niente: il workflow **Previsioni** gira (vedi `
 | `ANTHROPIC_API_KEY` | consigliato | chiave dello spazio di lavoro "bot-previsioni" (passo 5): modelli Claude e ricerca web |
 | `OPENROUTER_API_KEY` | no | chiave OpenRouter (crediti Metaculus o tua): accende il roster a 3 vendor (GPT-5.6 Sol e Gemini 3.7 Flash accanto a Opus 5.5); se manca la chiave Anthropic, anche i modelli Claude passano da qui |
 | `ASKNEWS_API_KEY` | no | AskNews con la chiave singola (va bene anche la coppia `ASKNEWS_CLIENT_ID` + `ASKNEWS_SECRET`) |
-| `FRED_API_KEY` | no | serie storiche FRED per le domande numeriche (gratis: https://fred.stlouisfed.org/docs/api/api_key.html); senza, si usa solo Yahoo Finance |
+| `FRED_API_KEY` | no | serie storiche FRED per le domande numeriche (gratis: https://fred.stlouisfed.org/docs/api/api_key.html); senza, si legge il CSV pubblico di FRED (stessi dati, nessuna chiave) |
 | `METACULUS_TOKEN_2` | no | token del **bot secondario** (per esempio `antivex-bot-2`) per i test A/B; vedi sotto |
 
 Senza chiavi dei modelli il bot usa il proxy di Metaculus con il solo `METACULUS_TOKEN`. In quel caso la ricerca web resta un tentativo: se il proxy non la supporta, il bot usa le altre fonti.
