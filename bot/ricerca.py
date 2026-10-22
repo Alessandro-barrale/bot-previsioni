@@ -22,7 +22,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from forecasting_tools import DateQuestion, MetaculusQuestion, NumericQuestion, clean_indents
+from forecasting_tools import MetaculusQuestion, NumericQuestion, clean_indents
 
 from bot.config import Impostazioni, chiave_presente
 from bot.llm import LlmRegistrato
@@ -254,7 +254,7 @@ class Ricercatore:
 
     async def ricerca(self, domanda: MetaculusQuestion, veloce: bool = False) -> str:
         esito = EsitoRicerca(veloce=veloce)
-        numerica = isinstance(domanda, (NumericQuestion, DateQuestion)) and not isinstance(domanda, DateQuestion)
+        numerica = isinstance(domanda, NumericQuestion)  # le serie storiche servono solo alle numeriche
         compiti: list[tuple[str, object]] = []
         # Le fonti "strutturali" prima: fonte di risoluzione, mercati, serie storiche.
         if self._fonte_risoluzione is not None and not veloce:
