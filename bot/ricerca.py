@@ -4,8 +4,11 @@ Ricerca a più fonti e a più giri (v2).
 Giro 1, in parallelo:
 - la fonte di risoluzione (pagine citate nei criteri, lette ORA);
 - i mercati di previsione (Polymarket, Manifold, Kalshi) abbinati da un modello economico;
-- le serie storiche (FRED, Yahoo Finance) per le domande numeriche;
-- AskNews (notizie recenti + archivio) e la ricerca web di Claude.
+- le serie storiche (FRED, Yahoo Finance) per le domande numeriche, oppure, se
+  il bot ne ha una (Market Pulse), una fonte numerica specifica al loro posto
+  (i risultati trimestrali delle aziende);
+- AskNews (notizie recenti + archivio) e la ricerca web di Claude, con una guida
+  facoltativa che dice al primo giro web cosa cercare per primo.
 Giro 2..N: un modello economico legge le note e scrive cosa manca; quelle
 domande vanno alla ricerca web.
 
@@ -66,7 +69,12 @@ class EsitoRicerca:
         return riga
 
 
-_NOMI_BREVI = {"resolution source": "risoluzione", "prediction markets": "mercati", "data series": "serie"}
+_NOMI_BREVI = {
+    "resolution source": "risoluzione",
+    "prediction markets": "mercati",
+    "data series": "serie",
+    "quarterly results": "trimestrali",
+}
 
 
 def stato_fonte(nome: str, testo: str | None, fallita: bool = False) -> str:
@@ -101,6 +109,8 @@ class Ricercatore:
         fonte_risoluzione=None,
         mercati=None,
         serie_storiche=None,
+        trimestrali=None,
+        guida_web=None,
     ) -> None:
         self.imp = impostazioni
         self.registro = registro
@@ -112,6 +122,10 @@ class Ricercatore:
         self._fonte_risoluzione = fonte_risoluzione if fonte_risoluzione is not None else self._fonte_risoluzione_predefinita()
         self._mercati = mercati if mercati is not None else self._mercati_predefiniti()
         self._serie = serie_storiche if serie_storiche is not None else self._serie_predefinite()
+        # Solo per i bot che li passano (Market Pulse): fonte numerica che sostituisce le serie
+        # generiche, e una guida per il primo giro web (domanda -> testo o None).
+        self._trimestrali = trimestrali
+        self._guida_web = guida_web
 
     # ----------------------------------------------------------- fonti
     def _fonte_web_predefinita(self):
@@ -240,7 +254,7 @@ class Ricercatore:
         return corpo
 
     # ------------------------------------------------------------ giri
-    def _richiesta_web(self, domanda: MetaculusQuestion, focus: str | None) -> str:
+    def _richiesta_web(self, domanda: MetaculusQuestion, focus: str | None, guida: str | None = None) -> str:
         oggi = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         richiesta = clean_indents(
             f"""
@@ -257,6 +271,8 @@ class Ricercatore:
             {domanda.fine_print or ""}
             """
         )
+        if guida:
+            richiesta += f"\n\nPriorities for this search:\n{guida}"
         if focus:
             richiesta += f"\n\nFocus this search on what is still missing:\n{focus}"
         return richiesta
@@ -297,18 +313,21 @@ class Ricercatore:
     async def ricerca(self, domanda: MetaculusQuestion, veloce: bool = False) -> str:
         esito = EsitoRicerca(veloce=veloce)
         numerica = isinstance(domanda, NumericQuestion)  # le serie storiche servono solo alle numeriche
+        guida = self._guida_web(domanda) if self._guida_web is not None else None
         compiti: list[tuple[str, object]] = []
         # Le fonti "strutturali" prima: fonte di risoluzione, mercati, serie storiche.
         if self._fonte_risoluzione is not None and not veloce:
             compiti.append(("resolution source", self._fonte_risoluzione(domanda)))
         if self._mercati is not None:
             compiti.append(("prediction markets", self._mercati(domanda)))
-        if self._serie is not None and numerica and not veloce:
+        if self._trimestrali is not None and numerica and not veloce:
+            compiti.append(("quarterly results", self._trimestrali(domanda)))
+        elif self._serie is not None and numerica and not veloce:
             compiti.append(("data series", self._serie(domanda)))
         if self._cerca_notizie is not None and not veloce:
             compiti.append(("AskNews", self._cerca_notizie(domanda.question_text)))
         if self._cerca_web is not None:
-            compiti.append(("web", self._cerca_web(self._richiesta_web(domanda, None))))
+            compiti.append(("web", self._cerca_web(self._richiesta_web(domanda, None, guida))))
         risultati = await asyncio.gather(*(self._prova(n, c, esito) for n, c in compiti))
         for (nome, _), testo in zip(compiti, risultati):
             esito.stati.append(stato_fonte(nome, testo, fallita=esito.fallita(nome)))

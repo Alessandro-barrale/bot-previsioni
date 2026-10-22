@@ -136,6 +136,8 @@ class LlmFinto(LlmRegistrato):
                 '```json\n{"fred_series_id": null, "yahoo_ticker": "BZ=F", "note": "Brent front-month future"}\n```',
                 60,
             )
+        if "TRIMESTRALI_AZIENDA" in testo:
+            return '```json\n{"company": "Example Corp", "ticker": "EXMP"}\n```', 30
         if "DOMANDE_MANCANTI" in testo:
             return "- ultime notizie sul tema\n- dati storici di confronto", 120
         if "RIASSUNTO_RICERCA" in testo:

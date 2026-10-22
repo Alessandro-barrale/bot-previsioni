@@ -44,7 +44,7 @@ from bot import combina
 from bot.config import Impostazioni
 from bot.llm import LlmRegistrato
 from bot.ricerca import Ricercatore
-from bot.spese import Registro, TettoSuperato, domanda_corrente
+from bot.spese import Registro, TettoSuperato, domanda_corrente, inizio_passata, torneo_corrente
 from template_bot import FallTemplateBot2026
 
 logger = logging.getLogger(__name__)
@@ -172,6 +172,10 @@ def _tipo(domanda: MetaculusQuestion) -> str:
 
 
 class BotPrevisioni(FallTemplateBot2026):
+    # Vero nei tornei dove una domanda si prevede più volte (Market Pulse): il tetto
+    # per domanda vale per ogni passata e il costo registrato è quello della passata.
+    passate_multiple: bool = False
+
     def __init__(
         self,
         *,
@@ -225,26 +229,37 @@ class BotPrevisioni(FallTemplateBot2026):
     async def _run_individual_question(self, question: MetaculusQuestion) -> ForecastReport:
         chiave = chiave_domanda(question)
         async with self._semaforo:
-            segno = domanda_corrente.set(chiave)
+            inizio = datetime.now(timezone.utc).isoformat(timespec="seconds") if self.passate_multiple else None
+            segni = (domanda_corrente.set(chiave), torneo_corrente.set(self.torneo), inizio_passata.set(inizio))
             try:
                 self.registro.controlla_tetti(None)
                 report = await super()._run_individual_question(question)
             except BaseException as errore:
                 self.registro.registra_previsione(
                     chiave, question.page_url, question.question_text, self.torneo, _tipo(question),
-                    None, inviata=False, errore=f"{type(errore).__name__}: {str(errore)[:500]}",
+                    None, inviata=False, errore=f"{type(errore).__name__}: {str(errore)[:500]}", dal=inizio,
                 )
                 raise
             finally:
-                domanda_corrente.reset(segno)
+                domanda_corrente.reset(segni[0])
+                torneo_corrente.reset(segni[1])
+                inizio_passata.reset(segni[2])
         self.registro.registra_previsione(
             chiave, question.page_url, question.question_text, self.torneo, _tipo(question),
-            _in_dati(report.prediction), inviata=self.publish_reports_to_metaculus,
+            _in_dati(report.prediction), inviata=self.publish_reports_to_metaculus, dal=inizio,
         )
         return report
 
+    def _minuti_rimasti(self, question: MetaculusQuestion) -> float | None:
+        """Minuti all'ultimo momento utile per prevedere (qui la chiusura; Market Pulse usa lo spot scoring)."""
+        return minuti_alla_chiusura(question)
+
+    def _nota_numerica(self, question: NumericQuestion | DateQuestion) -> str:
+        """Nota in più nel prompt delle numeriche, per i tornei che ne hanno una (Market Pulse)."""
+        return ""
+
     async def run_research(self, question: MetaculusQuestion) -> str:
-        minuti = minuti_alla_chiusura(question)
+        minuti = self._minuti_rimasti(question)
         veloce = False
         if minuti is not None:
             if minuti < self.imp.minuti_salto:
@@ -411,7 +426,7 @@ class BotPrevisioni(FallTemplateBot2026):
             Answer format: percentiles
             Question type: {"date" if data else "numeric"}
             {self._limiti_testo(question)}
-            {scoring}
+            {scoring}{self._nota_numerica(question)}
             Write your reasoning following steps 1-7 (for step 3 use the latest value with its date, past
             values and their variability over windows as long as the time remaining). Then give your
             distribution as 13 percentiles: 1, 2.5, 5, 10, 20, 40, 50, 60, 80, 90, 95, 97.5 and 99.
