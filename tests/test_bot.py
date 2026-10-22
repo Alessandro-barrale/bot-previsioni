@@ -214,6 +214,40 @@ async def test_ricerca_v2_fonte_nuova_guasta_non_blocca(tmp_path):
     assert not isinstance(rapporti[0], BaseException)
 
 
+async def fonte_una_su_due(domanda):
+    return (
+        "What the resolution source says NOW:\n### https://a.example/one\nPage date: 2026-10-20. Fetched: 2026-10-22.\ntesto"
+        "\n\n### https://b.example/two\n(could not be fetched today: HTTPError)"
+    )
+
+
+async def mercati_nessun_abbinamento(domanda):
+    return "Prediction markets: 7 candidate markets found for 'ecb cut', none judged to be on this question (no market evidence)."
+
+
+async def test_riga_di_log_delle_fonti_per_domanda(tmp_path, caplog):
+    import logging
+
+    from bot.ricerca import stato_fonte
+
+    caplog.set_level(logging.INFO, logger="bot.ricerca")
+    bot, _ = costruisci_v2(tmp_path, fonte_risoluzione=fonte_una_su_due, mercati=mercati_nessun_abbinamento, serie_storiche=guasta)
+    await bot.ricercatore.ricerca(domande_di_prova()[1])  # numerica: anche le serie
+    righe = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Fonti per ")]
+    assert len(righe) == 1, righe
+    assert righe[0] == (
+        "Fonti per prova://numerica: risoluzione 1/2, mercati 0 abbinati (7 trovati), serie errore, AskNews ok, "
+        "web ok, web giro 2 ok; fallite: data series (ConnectionError)"
+    )
+    caplog.clear()
+    await bot.ricercatore.ricerca(domande_di_prova()[0], veloce=True)
+    righe = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Fonti per ")]
+    assert righe == ["Fonti per prova://binaria (via veloce): mercati 0 abbinati (7 trovati), web ok"]
+    assert stato_fonte("prediction markets", "Prediction markets:\n- [Polymarket] a\n- [Kalshi] b") == "mercati 2 abbinati"
+    assert stato_fonte("resolution source", "page text") == "risoluzione ok"
+    assert stato_fonte("data series", None) == "serie no" and stato_fonte("web", "x", fallita=True) == "web errore"
+
+
 async def test_via_veloce_solo_web_e_mercati(tmp_path):
     bot, registro = costruisci_v2(tmp_path)
     testo = await bot.ricercatore.ricerca(domande_di_prova()[1], veloce=True)

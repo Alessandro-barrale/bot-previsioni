@@ -40,11 +40,11 @@ Cartella `bot-previsioni/`, 6 commit sopra `b6f034d` (uno per passo più la docu
 | File | Test | Cosa coprono |
 |---|---|---|
 | `tests/test_combina.py` | 44 | JSON finale, limiti, 13 percentili, date, regex di riserva, mediana delle CDF contro media dei percentili |
-| `tests/test_bot.py` | 22 | bot completo con il modello finto, alternanza outside/inside, prompt numerico, ricerca v2 e guasti, via veloce, salto per chiusura, roster 3 vendor, effort senza verbosity, bot secondario, workflow v2 spento |
-| `tests/test_fonti.py` | 15 | URL, pulizia HTML, limiti e guasti della fonte di risoluzione, peso liquidità, hazard, lettura delle tre piattaforme, abbinamento, serie storiche con e senza FRED |
+| `tests/test_bot.py` | 23 | bot completo con il modello finto, alternanza outside/inside, prompt numerico, ricerca v2 e guasti, riga di log delle fonti per domanda, via veloce, salto per chiusura, roster 3 vendor, effort senza verbosity, bot secondario, workflow v2 spento |
+| `tests/test_fonti.py` | 20 | URL (anche markdown Metaculus con escape e parentesi), pulizia HTML, CSV pubblico di FRED, limiti e guasti della fonte di risoluzione, peso liquidità, hazard, lettura delle tre piattaforme, abbinamento e log dei mercati, serie storiche con chiave FRED, con CSV e con solo Yahoo |
 | `tests/test_pagella.py` | 10 | binarie, scelta multipla, numeriche (bin, fuori scala, scala log, date), gruppi, salvataggio, riepilogo, rapporto |
 | `tests/test_spese.py` | 10 | listino, tetti, registro, rapporto |
-| **Totale** | **101** | tutti offline, nessuna rete |
+| **Totale** | **107** | tutti offline, nessuna rete |
 
 ## Costo per domanda
 

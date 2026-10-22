@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -41,6 +42,8 @@ class EsitoRicerca:
     fonti_usate: list[str] = field(default_factory=list)
     veloce: bool = False
 
+    stati: list[str] = field(default_factory=list)  # una voce corta per fonte, per la riga di log finale
+
     def testo(self) -> str:
         oggi = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         parti = [f"Research compiled on {oggi}. Each item shows its source and date when known."]
@@ -50,6 +53,40 @@ class EsitoRicerca:
         if self.fonti_fallite:
             parti.append("Sources that failed this time: " + ", ".join(self.fonti_fallite))
         return "\n\n".join(parti)
+
+    def fallita(self, nome: str) -> bool:
+        return any(f.startswith(f"{nome} (") for f in self.fonti_fallite)
+
+    def riga_di_log(self, etichetta: str) -> str:
+        """Una riga sola, per domanda, con cosa ha lavorato: dal log di GitHub si capisce senza aprire il briefing."""
+        via = " (via veloce)" if self.veloce else ""
+        riga = f"Fonti per {etichetta}{via}: " + (", ".join(self.stati) or "nessuna")
+        if self.fonti_fallite:
+            riga += "; fallite: " + ", ".join(self.fonti_fallite)
+        return riga
+
+
+_NOMI_BREVI = {"resolution source": "risoluzione", "prediction markets": "mercati", "data series": "serie"}
+
+
+def stato_fonte(nome: str, testo: str | None, fallita: bool = False) -> str:
+    """Voce corta per la riga di log: "risoluzione 1/2", "mercati 0 abbinati (7 trovati)", "web ok", "serie no"."""
+    breve = _NOMI_BREVI.get(nome, nome)
+    if fallita:
+        return f"{breve} errore"
+    if not testo:
+        return f"{breve} no"
+    if nome == "resolution source":
+        letti = testo.count("Fetched:")
+        falliti = testo.count("could not be fetched")
+        return f"{breve} {letti}/{letti + falliti}" if letti + falliti else f"{breve} ok"
+    if nome == "prediction markets":
+        trovati = re.search(r"(\d+) candidate markets found", testo)
+        if trovati:
+            return f"{breve} 0 abbinati ({trovati.group(1)} trovati)"
+        abbinati = sum(1 for r in testo.splitlines() if r.startswith("- ["))
+        return f"{breve} {abbinati} abbinati"
+    return f"{breve} ok"
 
 
 class Ricercatore:
@@ -269,6 +306,7 @@ class Ricercatore:
             compiti.append(("web", self._cerca_web(self._richiesta_web(domanda, None))))
         risultati = await asyncio.gather(*(self._prova(n, c, esito) for n, c in compiti))
         for (nome, _), testo in zip(compiti, risultati):
+            esito.stati.append(stato_fonte(nome, testo, fallita=esito.fallita(nome)))
             if testo:
                 esito.sezioni.append(f"## Source: {nome} (round 1)\n{testo}")
 
@@ -277,17 +315,20 @@ class Ricercatore:
                 mancante = await self._prova("analisi lacune", self._cosa_manca(domanda, "\n\n".join(esito.sezioni)), esito)
                 if not mancante:
                     break
-                testo = await self._prova(
-                    f"web giro {giro}", self._cerca_web(self._richiesta_web(domanda, mancante)), esito
-                )
+                nome = f"web giro {giro}"
+                testo = await self._prova(nome, self._cerca_web(self._richiesta_web(domanda, mancante)), esito)
+                esito.stati.append(stato_fonte(nome, testo, fallita=esito.fallita(nome)))
                 if testo:
                     esito.sezioni.append(f"## Source: web (round {giro}, looking for: {mancante})\n{testo}")
 
         if not esito.sezioni:
             # Ultima risorsa: quello che il modello sa, dichiarato come tale.
-            testo = await self._prova("conoscenza del modello", self.modello_ricerca.invoke(self._richiesta_web(domanda, None)), esito)
+            nome = "conoscenza del modello"
+            testo = await self._prova(nome, self.modello_ricerca.invoke(self._richiesta_web(domanda, None)), esito)
+            esito.stati.append(stato_fonte(nome, testo, fallita=esito.fallita(nome)))
             if testo:
                 esito.sezioni.append(
                     "## Source: model background knowledge (no live search available; may be outdated)\n" + testo
                 )
+        logger.info(esito.riga_di_log(getattr(domanda, "page_url", None) or domanda.question_text[:60]))
         return esito.testo()

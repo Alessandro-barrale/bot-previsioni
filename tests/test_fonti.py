@@ -167,7 +167,10 @@ def _mercato(volume, prezzo=0.4, giorni=60, piattaforma="Polymarket"):
     return mk.Mercato(piattaforma, "ECB cuts rates by December?", prezzo, volume, datetime.now(timezone.utc) + timedelta(days=giorni), "https://x/y")
 
 
-async def test_evidenza_mercati_pesata_e_proiettata(modello):
+async def test_evidenza_mercati_pesata_e_proiettata(modello, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="bot.fonti.mercati")
     domanda = domande_di_prova()[0]  # risolve tra 60 giorni
     candidati = [_mercato(250_000, 0.4, giorni=120), _mercato(800, 0.9, piattaforma="Manifold (play money)")]
 
@@ -177,6 +180,7 @@ async def test_evidenza_mercati_pesata_e_proiettata(modello):
 
     testo = await mk.evidenza_mercati(domanda, modello, cerca=cerca)
     assert testo.startswith("Prediction markets")
+    assert "Mercati: 2 candidati, 1 abbinati (0 same, 1 related)" in [r.getMessage() for r in caplog.records]
     # Il modello finto abbina solo il candidato 1 come "related": niente proiezione (solo per "same").
     assert "match: related" in testo and "Evidence: strong (liquidity weight 1.00)" in testo
     assert "Manifold" not in testo
@@ -234,7 +238,11 @@ def test_lettura_piattaforme(monkeypatch):
     assert len(k) == 1 and k[0].prezzo_si == 0.31 and k[0].volume_usd == 4200
 
 
-async def test_cerca_tutti_una_piattaforma_guasta():
+async def test_cerca_tutti_una_piattaforma_guasta(caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="bot.fonti.mercati")
+
     def ok(termine):
         return [_mercato(1000)]
 
@@ -243,6 +251,7 @@ async def test_cerca_tutti_una_piattaforma_guasta():
 
     trovati = await mk.cerca_tutti("x", {"A": ok, "B": rotta})
     assert len(trovati) == 1
+    assert "Mercati per 'x': 1 trovati (A 1, B 0)" in [r.getMessage() for r in caplog.records]
 
 
 # ---------------------------------------------------------- serie storiche

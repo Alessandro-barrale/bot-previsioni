@@ -201,6 +201,8 @@ async def cerca_tutti(termine: str, piattaforme: dict | None = None) -> list[Mer
             return []
 
     risultati = await asyncio.gather(*(una(n, f) for n, f in piattaforme.items()))
+    conteggi = ", ".join(f"{n} {len(lista)}" for n, lista in zip(piattaforme, risultati))
+    logger.info(f"Mercati per '{termine}': {sum(len(lista) for lista in risultati)} trovati ({conteggi})")
     return [m for lista in risultati for m in lista]
 
 
@@ -269,9 +271,15 @@ async def evidenza_mercati(domanda, modello_abbinamento, cerca=cerca_tutti) -> s
     candidati = await cerca(termine)
     candidati = [c for c in candidati if c.titolo][:3 * MAX_PER_PIATTAFORMA]
     if not candidati:
+        logger.info(f"Mercati: nessun candidato per '{termine}'")
         return None
     risposta = await modello_abbinamento.invoke(_prompt_abbinamento(domanda, candidati))
     abbinamenti = _leggi_abbinamenti(risposta, len(candidati))
+    stessi = sum(1 for _, relazione, _ in abbinamenti if relazione == "same")
+    logger.info(
+        f"Mercati: {len(candidati)} candidati, {len(abbinamenti)} abbinati "
+        f"({stessi} same, {len(abbinamenti) - stessi} related)"
+    )
     if not abbinamenti:
         return (
             f"Prediction markets: {len(candidati)} candidate markets found for '{termine}', none judged to be on "

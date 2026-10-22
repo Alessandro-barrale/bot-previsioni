@@ -132,6 +132,7 @@ async def fonte_risoluzione(domanda, scarica_pagina=scarica, max_caratteri: int 
     """Sezione del briefing con le pagine citate dai criteri, o None se non ce ne sono di leggibili."""
     url = estrai_url(domanda.resolution_criteria, domanda.fine_print, domanda.background_info)[:MAX_URL]
     if not url:
+        logger.info("Fonte di risoluzione: nessun URL leggibile nei criteri")
         return None
     oggi = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     quota = max_caratteri // len(url)
@@ -147,7 +148,9 @@ async def fonte_risoluzione(domanda, scarica_pagina=scarica, max_caratteri: int 
         if len(testo) > quota:
             estratto += " [...]"
         parti.append(f"### {indirizzo}\nPage date: {data or 'not stated'}. Fetched: {oggi}.\n{estratto}")
-    if not any("Fetched:" in p for p in parti):
+    letti = sum(1 for p in parti if "Fetched:" in p)
+    logger.info(f"Fonte di risoluzione: {letti}/{len(url)} pagine lette ({', '.join(url)})")
+    if not letti:
         return None
     return (
         "What the resolution source says NOW (fetched today; check the page date; this is the text the "
