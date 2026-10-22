@@ -46,7 +46,8 @@ jobs:
           # Variabili del repository (non segrete). L'invio parte solo con INVIA_PREVISIONI = si.
           INVIA_PREVISIONI: ${{ vars.INVIA_PREVISIONI }}
           MODELLI_PREVISIONE: ${{ vars.MODELLI_PREVISIONE }}
-          # Tetti v2 (predefiniti se vuoti): 0,90 $ a domanda, 15 $ al giorno, 150 $ al mese;
+          # Tetti v2 (predefiniti se vuoti): 0,90 $ a domanda, 15 $ al giorno, 150 $ al mese
+          # (variabile del repo: 100 $, perche' l'area di lavoro Anthropic ha un limite di 120 $);
           # obiettivo medio 0,50 $ a domanda.
           TETTO_DOMANDA_USD: ${{ vars.TETTO_DOMANDA_USD }}
           TETTO_GIORNO_USD: ${{ vars.TETTO_GIORNO_USD }}
@@ -56,12 +57,31 @@ jobs:
           MERCATI: ${{ vars.MERCATI }}
           KALSHI: ${{ vars.KALSHI }}
           SERIE_STORICHE: ${{ vars.SERIE_STORICHE }}
+      # Bot secondario (antivex-bot-2, non premiato): test A/B sul solo MiniBench.
+      # Stesso prompt e stessi modelli della primaria, ma ricerca solo web (come la v1):
+      # misura quanto valgono le fonti nuove (pagina di risoluzione, mercati, serie, AskNews).
+      # Parte solo con BOT_2_ATTIVO = si; un suo errore non rende rosso il giro.
+      - name: Bot secondario (A/B, solo MiniBench, ricerca solo web)
+        if: vars.BOT_2_ATTIVO == 'si'
+        continue-on-error: true
+        run: uv run --no-sync python main.py --modo minibench --bot 2
+        env:
+          METACULUS_TOKEN_2: ${{ secrets.METACULUS_TOKEN_2 }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          INVIA_PREVISIONI: ${{ vars.INVIA_PREVISIONI_2 }}
+          MODELLI_PREVISIONE: ${{ vars.MODELLI_PREVISIONE }}
+          TETTO_DOMANDA_USD: ${{ vars.TETTO_DOMANDA_USD }}
+          TETTO_GIORNO_USD: "5"
+          TETTO_MESE_USD: ${{ vars.TETTO_MESE_USD_2 }}
+          FONTE_RISOLUZIONE: "no"
+          MERCATI: "no"
+          SERIE_STORICHE: "no"
       - name: Salva il registro delle spese e delle previsioni
         if: always()
         run: |
           git config user.name "bot-previsioni"
           git config user.email "bot-previsioni@users.noreply.github.com"
-          git add dati/registro.sqlite 2>/dev/null || exit 0
+          for f in dati/registro.sqlite dati/registro_v2.sqlite; do [ -f "$f" ] && git add "$f"; done
           git diff --cached --quiet && exit 0
           git commit -m "Registro: giro del $(date -u +%Y-%m-%dT%H:%M)Z"
           git pull --rebase --quiet
