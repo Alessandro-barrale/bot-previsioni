@@ -1,0 +1,60 @@
+name: Previsioni v2 (bot secondario, test A/B)
+
+# Bot secondario per confrontare la v2 con la primaria su un MiniBench intero.
+# SPENTO per impostazione: parte solo a mano (workflow_dispatch, nessun cron) e
+# solo se la variabile del repository BOT_2_ATTIVO vale "si". Serve il segreto
+# METACULUS_TOKEN_2 (token del secondo bot, per esempio antivex-bot-2).
+# Per farlo girare da solo come la primaria, aggiungere un cron o un'altra
+# sveglia esterna (vedi SVEGLIA.md) quando la direzione decide di accenderlo.
+# Scrive in dati/registro_v2.sqlite: previsioni e spese restano separate.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: bot-previsioni
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  previsioni_v2:
+    if: vars.BOT_2_ATTIVO == 'si'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Installa le dipendenze
+        run: uv sync --frozen --no-dev --python 3.11
+      - name: Fai le previsioni con il bot secondario
+        run: uv run --no-sync python main.py --modo torneo --bot 2
+        env:
+          METACULUS_TOKEN_2: ${{ secrets.METACULUS_TOKEN_2 }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ASKNEWS_CLIENT_ID: ${{ secrets.ASKNEWS_CLIENT_ID }}
+          ASKNEWS_SECRET: ${{ secrets.ASKNEWS_SECRET }}
+          ASKNEWS_API_KEY: ${{ secrets.ASKNEWS_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          # L'invio del bot secondario ha la sua variabile: INVIA_PREVISIONI_2.
+          INVIA_PREVISIONI: ${{ vars.INVIA_PREVISIONI_2 }}
+          MODELLI_PREVISIONE: ${{ vars.MODELLI_PREVISIONE_2 }}
+          TETTO_DOMANDA_USD: ${{ vars.TETTO_DOMANDA_USD }}
+          TETTO_GIORNO_USD: ${{ vars.TETTO_GIORNO_USD }}
+          TETTO_MESE_USD: ${{ vars.TETTO_MESE_USD }}
+          FONTE_RISOLUZIONE: ${{ vars.FONTE_RISOLUZIONE }}
+          MERCATI: ${{ vars.MERCATI }}
+          SERIE_STORICHE: ${{ vars.SERIE_STORICHE }}
+      - name: Salva il registro del bot secondario
+        if: always()
+        run: |
+          git config user.name "bot-previsioni"
+          git config user.email "bot-previsioni@users.noreply.github.com"
+          git add dati/registro_v2.sqlite 2>/dev/null || exit 0
+          git diff --cached --quiet && exit 0
+          git commit -m "Registro v2: giro del $(date -u +%Y-%m-%dT%H:%M)Z"
+          git pull --rebase --quiet
+          git push --quiet

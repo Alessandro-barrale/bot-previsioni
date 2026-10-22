@@ -6,6 +6,7 @@ Avvio del bot.
     uv run python main.py --modo torneo               # torneo stagionale + MiniBench
     uv run python main.py --modo rapporto             # rapporto settimanale in rapporti/
     uv run python main.py --modo pagella              # pagella: noi contro la community (serve METACULUS_TOKEN)
+    uv run python main.py --modo torneo --bot 2       # bot secondario (METACULUS_TOKEN_2, registro separato)
 
 L'invio a Metaculus parte solo se INVIA_PREVISIONI=si (variabile del repository
 in GitHub, oppure .env in locale). Con il modo prova_offline non si invia mai.
@@ -17,6 +18,7 @@ import asyncio
 import logging
 import os
 import sys
+from pathlib import Path
 
 import dotenv
 
@@ -104,6 +106,22 @@ def stampa_costi(registro: Registro, domande) -> None:
         print(f"  {d.page_url}: {righe[0]} chiamate, {righe[1]} token in, {righe[2]} token out, {righe[3]:.3f} $")
 
 
+def configura_bot_secondario() -> bool:
+    """
+    Il bot secondario usa il token METACULUS_TOKEN_2 (che diventa METACULUS_TOKEN
+    per la libreria) e registri separati, così la v2 può girare in parallelo alla
+    primaria senza mescolare previsioni e spese. Vero se il token c'è.
+    """
+    from bot.config import CARTELLA_PROGETTO, chiave_presente
+
+    if not chiave_presente("METACULUS_TOKEN_2"):
+        return False
+    os.environ["METACULUS_TOKEN"] = os.environ["METACULUS_TOKEN_2"]
+    os.environ.setdefault("PERCORSO_REGISTRO", str(CARTELLA_PROGETTO / "dati" / "registro_v2.sqlite"))
+    os.environ.setdefault("PERCORSO_PAGELLA", str(CARTELLA_PROGETTO / "dati" / "pagella_v2.sqlite"))
+    return True
+
+
 def main() -> int:
     # Su Windows la console non è UTF-8: le emoji del template la farebbero cadere.
     for flusso in (sys.stdout, sys.stderr):
@@ -117,7 +135,14 @@ def main() -> int:
         default="torneo",
     )
     parser.add_argument("--guasto", action="store_true", help="prova: simula una fonte di ricerca che non risponde")
+    parser.add_argument(
+        "--bot", type=int, choices=[1, 2], default=1,
+        help="2 = bot secondario (METACULUS_TOKEN_2, registro dati/registro_v2.sqlite), per i test A/B",
+    )
     args = parser.parse_args()
+    if args.bot == 2 and not configura_bot_secondario():
+        print("Manca METACULUS_TOKEN_2: il bot secondario non parte.")
+        return 1
 
     if args.modo == "rapporto":
         from bot.rapporto import scrivi_rapporto
@@ -134,9 +159,10 @@ def main() -> int:
         if not chiave_presente("METACULUS_TOKEN"):
             print("Manca METACULUS_TOKEN: pagella non aggiornata (i test usano dati finti).")
             return 0
-        scritte = pagella.aggiorna_pagella(os.environ["METACULUS_TOKEN"])
-        print(f"Pagella: {scritte} domande risolte valutate, salvate in {pagella.PERCORSO_PAGELLA}")
-        for riga in pagella.tabella_markdown():
+        percorso = Path(os.getenv("PERCORSO_PAGELLA") or pagella.PERCORSO_PAGELLA)
+        scritte = pagella.aggiorna_pagella(os.environ["METACULUS_TOKEN"], percorso)
+        print(f"Pagella: {scritte} domande risolte valutate, salvate in {percorso}")
+        for riga in pagella.tabella_markdown(percorso):
             print(riga)
         return 0
 

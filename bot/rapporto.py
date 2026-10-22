@@ -144,7 +144,8 @@ def scrivi_rapporto(
     try:
         from bot import pagella
 
-        righe += pagella.tabella_markdown(percorso_pagella or pagella.PERCORSO_PAGELLA)
+        percorso_pagella = percorso_pagella or Path(os.getenv("PERCORSO_PAGELLA") or pagella.PERCORSO_PAGELLA)
+        righe += pagella.tabella_markdown(percorso_pagella)
     except Exception as errore:  # la pagella non deve mai bloccare il rapporto
         righe.append(f"- Pagella non disponibile ({type(errore).__name__}).")
 

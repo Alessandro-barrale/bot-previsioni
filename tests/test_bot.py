@@ -1,4 +1,6 @@
 """Prove del bot completo con il modello finto: nessuna rete, nessun invio."""
+import os
+
 import pytest
 from forecasting_tools import BinaryQuestion
 
@@ -325,3 +327,29 @@ async def test_rotazione_su_tre_modelli_sei_campioni(tmp_path):
     conteggi = dict(registro.interroga("SELECT modello, COUNT(*) FROM chiamate WHERE scopo='previsione' GROUP BY modello"))
     assert conteggi == {"finto/a": 2, "finto/b": 2, "finto/c": 2}
     assert sum("OUTSIDE VIEW" in p for p in LlmCheRegistraPrompt.prompt_visti) == 3
+
+
+# ------------------------------------------------------------ bot secondario
+def test_bot_secondario_usa_token_2_e_registri_separati(monkeypatch):
+    import main as avvio
+
+    for nome in ("METACULUS_TOKEN_2", "PERCORSO_REGISTRO", "PERCORSO_PAGELLA"):
+        monkeypatch.delenv(nome, raising=False)
+    monkeypatch.setenv("METACULUS_TOKEN", "token-primario-finto")
+    assert avvio.configura_bot_secondario() is False
+    assert os.environ["METACULUS_TOKEN"] == "token-primario-finto"
+    monkeypatch.setenv("METACULUS_TOKEN_2", "token-secondario-finto")
+    assert avvio.configura_bot_secondario() is True
+    assert os.environ["METACULUS_TOKEN"] == "token-secondario-finto"
+    assert os.environ["PERCORSO_REGISTRO"].endswith("registro_v2.sqlite")
+    assert os.environ["PERCORSO_PAGELLA"].endswith("pagella_v2.sqlite")
+    assert Impostazioni.da_ambiente().percorso_registro.name == "registro_v2.sqlite"
+
+
+def test_workflow_v2_spento_per_impostazione():
+    from pathlib import Path
+
+    testo = Path(__file__).resolve().parent.parent.joinpath(".github", "workflows", "previsioni-v2.yaml").read_text(encoding="utf-8")
+    assert "schedule:" not in testo and "workflow_dispatch:" in testo
+    assert "if: vars.BOT_2_ATTIVO == 'si'" in testo and "--bot 2" in testo
+    assert "METACULUS_TOKEN_2: ${{ secrets.METACULUS_TOKEN_2 }}" in testo
