@@ -91,35 +91,38 @@ class LlmFinto(LlmRegistrato):
 
     def _risposta(self, testo: str) -> tuple[str, int]:
         ragionamento = (
-            "(a) Frequenza di base: eventi simili accadono raramente.\n"
-            "(b) Tempo rimasto: alcune settimane.\n"
-            "(c) Se non cambia niente: vale lo status quo.\n"
+            "1. Status quo: no qualifying event has yet occurred inside the window.\n"
+            "2. Resolution check: not yet satisfied.\n"
+            "3. Base rate: events like this happen rarely; anchored on the calculation.\n"
+            "7. Calibration check done.\n"
         )
-        # Le risposte ai prompt di previsione simulano anche i token di ragionamento.
+        # Le risposte ai prompt di previsione simulano anche i token di ragionamento
+        # e chiudono con il blocco JSON obbligatorio della v2.
         if "Answer format: probability" in testo:
             p = self._caso.uniform(0.15, 0.45)
-            return ragionamento + f"Probability: {p * 100:.0f}%", 1800
+            return ragionamento + f"Probability: {p * 100:.0f}%\n```json\n{{\"probability\": {p:.3f}}}\n```", 1800
         if "Answer format: option probabilities" in testo:
             opzioni = re.findall(r"^\s*- Option: (.+)$", testo, flags=re.MULTILINE)
             pesi = [self._caso.uniform(1, 5) for _ in opzioni]
             totale = sum(pesi)
-            righe = [f"{o}: {round(100 * w / totale)}%" for o, w in zip(opzioni, pesi)]
-            return ragionamento + "\n".join(righe), 1800
+            corpo = ", ".join(f'"{o}": {w / totale:.3f}' for o, w in zip(opzioni, pesi))
+            return ragionamento + '```json\n{"option_probabilities": {' + corpo + "}}\n```", 1800
         if "Answer format: percentiles" in testo:
             data = "Question type: date" in testo
             basso = _valore(re.search(r"^\s*Lower bound: (\S+)", testo, flags=re.MULTILINE).group(1), data)
             alto = _valore(re.search(r"^\s*Upper bound: (\S+)", testo, flags=re.MULTILINE).group(1), data)
             centro = self._caso.uniform(0.35, 0.65)
-            punti = {10: -0.25, 20: -0.15, 40: -0.04, 60: 0.04, 80: 0.15, 90: 0.25}
-            righe = []
-            for percentile, scarto in punti.items():
-                valore = basso + (alto - basso) * min(0.98, max(0.02, centro + scarto))
+            z = {1: -2.33, 2.5: -1.96, 5: -1.64, 10: -1.28, 20: -0.84, 40: -0.25, 50: 0.0, 60: 0.25,
+                 80: 0.84, 90: 1.28, 95: 1.64, 97.5: 1.96, 99: 2.33}
+            voci = []
+            for percentile, scarto in z.items():
+                valore = basso + (alto - basso) * min(0.98, max(0.02, centro + 0.12 * scarto))
                 if data:
-                    testo_valore = datetime.fromtimestamp(valore, tz=timezone.utc).strftime("%Y-%m-%d")
+                    giorno = datetime.fromtimestamp(valore, tz=timezone.utc).strftime("%Y-%m-%d")
+                    voci.append(f'"{percentile:g}": "{giorno}"')
                 else:
-                    testo_valore = f"{valore:.4f}"
-                righe.append(f"Percentile {percentile}: {testo_valore}")
-            return ragionamento + "\n".join(righe), 1800
+                    voci.append(f'"{percentile:g}": {valore:.4f}')
+            return ragionamento + '```json\n{"declared_percentiles": {' + ", ".join(voci) + "}}\n```", 1800
         if "DOMANDE_MANCANTI" in testo:
             return "- ultime notizie sul tema\n- dati storici di confronto", 120
         if "RIASSUNTO_RICERCA" in testo:

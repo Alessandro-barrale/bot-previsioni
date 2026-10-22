@@ -48,7 +48,7 @@ async def test_ogni_tipo_di_domanda(tmp_path):
     rapporti = await bot.forecast_questions(domande_di_prova(), return_exceptions=True)
     assert all(not isinstance(r, BaseException) for r in rapporti), rapporti
     binaria = rapporti[0]
-    assert 0.01 <= binaria.prediction <= 0.99
+    assert 0.02 <= binaria.prediction <= 0.98
     righe = registro.interroga("SELECT tipo, errore FROM previsioni ORDER BY id")
     assert [r[0] for r in righe] == ["binary", "numeric", "multiple_choice", "date"]
     assert all(r[1] is None for r in righe)
@@ -121,3 +121,48 @@ async def test_domanda_gia_prevista_non_si_rifa(tmp_path):
 def test_invio_spento_per_impostazione():
     assert Impostazioni().invia_previsioni is False
     assert isinstance(domande_di_prova()[0], BinaryQuestion)
+
+
+class LlmCheRegistraPrompt(LlmFinto):
+    prompt_visti: list[str] = []
+
+    async def _chiama(self, prompt):
+        LlmCheRegistraPrompt.prompt_visti.append(prompt if isinstance(prompt, str) else str(prompt))
+        return await super()._chiama(prompt)
+
+
+async def test_alternanza_outside_inside_e_blocco_json(tmp_path):
+    LlmCheRegistraPrompt.prompt_visti = []
+    bot, registro = costruisci(tmp_path)
+    bot.modelli_previsione = [
+        LlmCheRegistraPrompt(model=m.model, registro=registro, scopo="previsione", seme=i)
+        for i, m in enumerate(bot.modelli_previsione)
+    ]
+    await bot.forecast_questions(domande_di_prova()[:1], return_exceptions=True)
+    visti = LlmCheRegistraPrompt.prompt_visti
+    assert len(visti) == 5
+    outside = [p for p in visti if "lens for this sample: OUTSIDE VIEW" in p]
+    inside = [p for p in visti if "lens for this sample: INSIDE VIEW" in p]
+    assert len(outside) == 3 and len(inside) == 2
+    for p in visti:
+        assert "STATUS QUO FIRST" in p and "RESOLUTION CHECK" in p and "ANCHOR ON YOUR MATH" in p
+        assert "SOFT CLOCK" in p and "HISTORY DISCHARGED" in p and "NULL RESULT" in p
+        assert "Boolean product" in p and "9:1 odds" in p
+        assert '{"probability": 0.37}' in p
+    assert [BotPrevisioni.angolo(t) for t in (1, 2, 3, 4, 5, 6)] == ["outside", "inside"] * 3
+
+
+async def test_prompt_numerico_chiede_13_percentili_e_scoring(tmp_path):
+    LlmCheRegistraPrompt.prompt_visti = []
+    bot, registro = costruisci(tmp_path)
+    bot.modelli_previsione = [LlmCheRegistraPrompt(model="finto/claude-opus-5-5", registro=registro, scopo="previsione", seme=0)]
+    domande = domande_di_prova()
+    rapporti = await bot.forecast_questions([domande[1], domande[3]], return_exceptions=True)
+    assert all(not isinstance(r, BaseException) for r in rapporti), rapporti
+    numerici = [p for p in LlmCheRegistraPrompt.prompt_visti if "Question type: numeric" in p]
+    date = [p for p in LlmCheRegistraPrompt.prompt_visti if "Question type: date" in p]
+    assert numerici and date
+    assert "log density score" in numerici[0] and "random walk" in numerici[0] and '"97.5": 0' in numerici[0]
+    assert "status quo is that it does NOT happen" in date[0] and '"2.5": "2027-03-15"' in date[0]
+    previsione = registro.interroga("SELECT previsione FROM previsioni WHERE tipo='numeric'")[0][0]
+    assert '"p2.5"' in previsione and '"p97.5"' in previsione
