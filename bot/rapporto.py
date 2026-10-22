@@ -1,7 +1,8 @@
 """
 Rapporto settimanale in italiano, scritto in rapporti/AAAA-MM-GG.md.
 
-Dati locali (sempre): domande coperte e saltate, spesa della settimana e del mese.
+Dati locali (sempre): domande coperte e saltate, spesa della settimana e del mese,
+pagella (nostre previsioni contro la community, da dati/pagella.sqlite).
 Dati Metaculus (se l'API li espone al token del bot): posizione e punteggio in
 classifica, premio stimato. Se l'API non risponde, il rapporto lo dice e va avanti.
 """
@@ -91,7 +92,9 @@ def classifica(torneo: str, nome_utente: str | None) -> str:
     )
 
 
-def scrivi_rapporto(imp: Impostazioni, adesso: datetime | None = None, cartella: Path | None = None) -> Path:
+def scrivi_rapporto(
+    imp: Impostazioni, adesso: datetime | None = None, cartella: Path | None = None, percorso_pagella: Path | None = None
+) -> Path:
     adesso = adesso or datetime.now(timezone.utc)
     cartella = cartella or CARTELLA_PROGETTO / "rapporti"
     cartella.mkdir(parents=True, exist_ok=True)
@@ -136,6 +139,14 @@ def scrivi_rapporto(imp: Impostazioni, adesso: datetime | None = None, cartella:
     righe.append(f"- Mese {mese}: {spesa_mese:.2f} $ su un tetto di {imp.tetto_mese:.0f} $.")
     if media is not None:
         righe.append(f"- Media per domanda: {media:.2f} $ (obiettivo {imp.obiettivo_medio_domanda:.2f} $).")
+
+    righe += ["", "## Pagella: noi contro la community (domande risolte)"]
+    try:
+        from bot import pagella
+
+        righe += pagella.tabella_markdown(percorso_pagella or pagella.PERCORSO_PAGELLA)
+    except Exception as errore:  # la pagella non deve mai bloccare il rapporto
+        righe.append(f"- Pagella non disponibile ({type(errore).__name__}).")
 
     righe += ["", "## Classifica e premi"]
     if chiave_presente("METACULUS_TOKEN"):

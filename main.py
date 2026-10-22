@@ -5,6 +5,7 @@ Avvio del bot.
     uv run python main.py --modo test_questions       # domande vere dell'area di prova (serve METACULUS_TOKEN)
     uv run python main.py --modo torneo               # torneo stagionale + MiniBench
     uv run python main.py --modo rapporto             # rapporto settimanale in rapporti/
+    uv run python main.py --modo pagella              # pagella: noi contro la community (serve METACULUS_TOKEN)
 
 L'invio a Metaculus parte solo se INVIA_PREVISIONI=si (variabile del repository
 in GitHub, oppure .env in locale). Con il modo prova_offline non si invia mai.
@@ -14,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 
 import dotenv
@@ -111,7 +113,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Bot di previsioni per Metaculus FutureEval")
     parser.add_argument(
         "--modo",
-        choices=["torneo", "stagione", "minibench", "test_questions", "prova_offline", "rapporto"],
+        choices=["torneo", "stagione", "minibench", "test_questions", "prova_offline", "rapporto", "pagella"],
         default="torneo",
     )
     parser.add_argument("--guasto", action="store_true", help="prova: simula una fonte di ricerca che non risponde")
@@ -123,6 +125,19 @@ def main() -> int:
         imp = Impostazioni.da_ambiente()
         percorso = scrivi_rapporto(imp)
         print(f"Rapporto scritto in {percorso}")
+        return 0
+
+    if args.modo == "pagella":
+        from bot import pagella
+        from bot.config import chiave_presente
+
+        if not chiave_presente("METACULUS_TOKEN"):
+            print("Manca METACULUS_TOKEN: pagella non aggiornata (i test usano dati finti).")
+            return 0
+        scritte = pagella.aggiorna_pagella(os.environ["METACULUS_TOKEN"])
+        print(f"Pagella: {scritte} domande risolte valutate, salvate in {pagella.PERCORSO_PAGELLA}")
+        for riga in pagella.tabella_markdown():
+            print(riga)
         return 0
 
     prova_offline = args.modo == "prova_offline"
