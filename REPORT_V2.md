@@ -58,10 +58,47 @@ Cartella `bot-previsioni/`, 6 commit sopra `b6f034d` (uno per passo più la docu
 - Polymarket e Kalshi: da questa macchina le due API danno errore TLS (probabile blocco geografico o proxy); il codice segue la documentazione ed è coperto dai test con risposte finte. Da GitHub Actions (runner USA) dovrebbero rispondere; se no, la fonte cade in modo pulito (riga "Sources that failed").
 - La forma del JSON dell'API Metaculus per la pagella (`my_forecasts.history`, `aggregations.recency_weighted.history`) va confermata al primo giro con il token: il log dice quali domande non sono valutabili.
 - Interpolazione PCHIP ed effort alto su Anthropic: lasciati fuori (il primo non serve con 13 percentili, il secondo costa in modo non misurato).
-- Market Pulse e aggiornamenti continui: fuori dal piano v2.
+- Market Pulse e aggiornamenti continui: fatti dopo, vedi la sezione "Market Pulse 26Q4" in fondo.
 
 ## Cosa serve dall'utente
 
 1. **Niente per la v2 base**: con i segreti attuali (`METACULUS_TOKEN`, `ANTHROPIC_API_KEY`) il prossimo `git push` accende prompt v2, ricerca v2 e pagella.
 2. Facoltativi, tutti segreti GitHub: `OPENROUTER_API_KEY` (roster a 3 vendor), `ASKNEWS_API_KEY` (notizie), `FRED_API_KEY` (serie ufficiali), `METACULUS_TOKEN_2` (secondo bot, poi variabile `BOT_2_ATTIVO=si` e una sveglia per farlo girare).
 3. Decidere il push: tutto è in commit locali, non è stato pubblicato niente.
+
+---
+
+# Market Pulse 26Q4 (aggiunta del 22/10/2026)
+
+Commit `558e35d` (registro per torneo e fonte dei risultati trimestrali) e `016fca9` (modo `market_pulse`, workflow, rapporto), più quello di questa documentazione. **155 test** verdi con `uv run --no-sync pytest -q` (erano 118: 13 sui trimestrali, 24 su Market Pulse), tutti offline; ogni commit è stato provato da solo in un worktree pulito. Nessuna chiave nel codice, nei log o nei commit; `.env` non letto; variabili del repo non toccate; nessun push. Il passo resta spento finché la direzione non mette `MARKET_PULSE_ATTIVO` = `si`.
+
+## Cosa è fatto
+
+- **Domande di gruppo.** forecasting-tools 0.3.4 le espone già come `NumericQuestion` singole: `get_all_open_questions_from_tournament` usa `group_question_mode="unpack_subquestions"`, filtra lo stato sotto-domanda per sotto-domanda e mette l'etichetta in `group_question_option`; `CURRENT_MARKET_PULSE_ID` è `market-pulse-26q4`. Però scarta il gruppo intero se manca `fine_print`, `description` o `resolution_criteria` (KeyError), sostituisce i criteri della sotto-domanda con quelli del gruppo e aspetta 3,5-4,5 s a richiesta. Quindi `bot/market_pulse.py` legge prima i post direttamente (una richiesta) con uno spacchettatore tollerante che usa lo stesso `DataOrganizer` della libreria, e chiama la libreria solo se la lettura diretta fallisce o non capisce una sotto-domanda; unione per chiave. Ogni sotto-domanda va nella pipeline v2 (ricerca, 5-6 campioni, mediana delle CDF).
+- **Calendario a costo controllato.** Scadenza = il primo tra `spot_scoring_time` e la chiusura. Prima previsione quando la sotto-domanda compare; aggiornamento solo nelle ultime 6 ore prima della scadenza e solo se la prima ha almeno 1 giorno; poi niente. Al massimo 12 sotto-domande per giro, prima gli aggiornamenti e poi la scadenza più vicina. Le previsioni fatte si leggono dal registro filtrato per torneo e, quando si invia, dalla storia `my_forecasts` dell'API (se un registro non fosse stato salvato non si rifà la prima). La libreria non salta le domande già previste (`skip_previously_forecasted_questions=False`): decide il calendario.
+- **Registro.** Lo stesso `dati/registro.sqlite`. Colonna `torneo` nelle chiamate (aggiunta da sola ai registri vecchi: provato su una copia del registro vero, 43 chiamate e 2,27 $ invariati). Solo `BotMarketPulse` ammette due previsioni per domanda; `BotPrevisioni` degli altri tornei salta ancora la domanda già prevista (test `test_doppia_previsione_solo_in_market_pulse`).
+- **Tetti.** `TETTO_MESE_MP_USD` 30 $ e `TETTO_GIORNO_MP_USD` 8 $ (questo l'ho aggiunto io: senza, la prima accensione con decine di sotto-domande aperte potrebbe consumare il tetto giornaliero generale di 15 $ e fermare FutureEval), contati filtrando per torneo e dentro i tetti generali. Tetto per domanda per passata, 2 × `TETTO_DOMANDA_USD` sul totale. Vicino a un tetto proprio le prime previsioni aspettano e restano gli aggiornamenti.
+- **Ricerca.** `bot/fonti/trimestrali.py` al posto delle serie generiche: ricavi, EPS diluito, utile netto degli ultimi trimestri dalla SEC (XBRL, quarto trimestre ricavato dall'anno), consenso del trimestre in corso e del prossimo, sorprese EPS e data dei risultati da Yahoo, prezzo come contesto. Provato dal vivo da qui: Yahoo e SEC rispondono per NVDA, AAPL, TSLA (consenso NVDA trimestre al 31/10/2026: 108,98 B $ di ricavi, 45 analisti; 4 beat EPS su 4). La SEC rifiuta con 403 lo User-Agent con l'indirizzo noreply di GitHub: il predefinito usa `example.com` (dominio riservato) e si cambia con `SEC_USER_AGENT`. La guida del primo giro web chiede consenso, guidance, data e beat/miss degli ultimi 8 trimestri (la storia delle sorprese sui ricavi non è nelle fonti gratuite).
+- **Prompt.** Nota per le numeriche di Market Pulse: serie amministrata, centro sul consenso o sulla guidance più recente spostato della sorpresa tipica, larghezza dalla storia dei beat/miss e non dalla volatilità del titolo, massa oltre i limiti aperti, ora dello spot scoring; all'aggiornamento il prompt lo dice. Gli altri tornei hanno il prompt identico a prima.
+- **Main e workflow.** `--modo market_pulse`; con `--bot 2` esce con errore (si entra una volta sola, e mai con l'account umano). Passo nel job `previsioni` dopo il torneo principale, `if: vars.MARKET_PULSE_ATTIVO == 'si'`, `continue-on-error: true`, `timeout-minutes: 40`, token `secrets.METACULUS_TOKEN`; il registro lo salva il passo finale già esistente.
+- **Rapporto.** Spesa del mese di Market Pulse e classifica del torneo, solo quando ci sono previsioni.
+
+## Non verificabile senza token
+
+La forma esatta del JSON dei gruppi di Market Pulse (l'API risponde 403 senza token). Il codice regge le due forme plausibili, con test per entrambe: (A) testi a livello di gruppo, `status` e `spot_scoring_time` su ogni sotto-domanda (la libreria e la lettura diretta danno le stesse domande); (B) testi solo sulla sotto-domanda, niente `status` (dedotto da apertura e chiusura), niente `spot_scoring_time` (si usa la chiusura), niente `default_project` (la libreria scarta il gruppo, la lettura diretta no); più i post non di gruppo.
+
+## Cosa guardare al primo giro vero su GitHub
+
+1. La riga `Market Pulse market-pulse-26q4: N sotto-domande aperte in M post (lettura diretta)`: N deve essere vicino alle sotto-domande aperte sul sito. Se compare `libreria chiamata perché: ...`, il motivo dice cosa non è stato capito.
+2. La riga `Market Pulse: N sotto-domande aperte; in questo giro X (a prime, b aggiornamenti) [motivi]`: se i motivi dicono `nessuno spot scoring noto`, il campo `spot_scoring_time` non c'è e la scadenza è la chiusura (va bene, ma da sapere).
+3. `Trimestrali per NVDA: SEC, Yahoo consenso, Yahoo prezzo`: dal runner Yahoo potrebbe rispondere 429 o negare il crumb; la fonte cade pulita e resta il web.
+4. Sul sito, che le previsioni stiano sulle sotto-domande giuste dei gruppi (l'invio usa `id_of_question`).
+5. La durata del passo e del job: senza sotto-domande da fare il passo dura pochi secondi, ma va visto se il job passa al minuto successivo.
+6. Nel rapporto del lunedì la riga `Market Pulse, mese ...` e i costi a passata (stima 0,5 $).
+
+## Cosa serve dalla direzione
+
+1. Accendere: variabile `MARKET_PULSE_ATTIVO` = `si` (con `INVIA_PREVISIONI` = `si` invia davvero).
+2. Facoltativo: alzare `TETTO_MESE_USD` di 30 $ (oggi 100 $ nel repo, secondo il commento del workflow), perché la spesa di Market Pulse conta anche nel tetto generale e altrimenti la toglie al torneo principale.
+3. Facoltativo: `SEC_USER_AGENT` con un contatto vero ("nome indirizzo"), come chiede la SEC.
+4. Il push.
