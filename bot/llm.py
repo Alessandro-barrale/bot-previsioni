@@ -123,6 +123,16 @@ class LlmFinto(LlmRegistrato):
                 else:
                     voci.append(f'"{percentile:g}": {valore:.4f}')
             return ragionamento + '```json\n{"declared_percentiles": {' + ", ".join(voci) + "}}\n```", 1800
+        if "ABBINAMENTO_MERCATI" in testo:
+            return (
+                '```json\n{"matches": [{"n": 1, "relation": "related", "why": "same topic, different date"}]}\n```',
+                80,
+            )
+        if "SERIE_STORICHE" in testo:
+            return (
+                '```json\n{"fred_series_id": null, "yahoo_ticker": "BZ=F", "note": "Brent front-month future"}\n```',
+                60,
+            )
         if "DOMANDE_MANCANTI" in testo:
             return "- ultime notizie sul tema\n- dati storici di confronto", 120
         if "RIASSUNTO_RICERCA" in testo:

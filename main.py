@@ -186,7 +186,8 @@ def main() -> int:
     # Se però falliscono tutte, il giro è rosso: di solito è una chiave sbagliata, e GitHub manda l'email.
     # Un tetto di spesa raggiunto invece è previsto e resta verde.
     errori = [r for r in rapporti if isinstance(r, BaseException)]
-    if rapporti and len(errori) == len(rapporti) and not any("tetto" in str(e) for e in errori):
+    benigni = ("tetto", "ChiusuraImminente", "saltata")
+    if rapporti and len(errori) == len(rapporti) and not any(b in str(e) or b in type(e).__name__ for e in errori for b in benigni):
         print("Tutte le domande sono fallite: controlla le chiavi e il log.")
         return 1
     return 0

@@ -41,12 +41,20 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           ASKNEWS_CLIENT_ID: ${{ secrets.ASKNEWS_CLIENT_ID }}
           ASKNEWS_SECRET: ${{ secrets.ASKNEWS_SECRET }}
+          ASKNEWS_API_KEY: ${{ secrets.ASKNEWS_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           # Variabili del repository (non segrete). L'invio parte solo con INVIA_PREVISIONI = si.
           INVIA_PREVISIONI: ${{ vars.INVIA_PREVISIONI }}
           MODELLI_PREVISIONE: ${{ vars.MODELLI_PREVISIONE }}
+          # Tetti v2 (predefiniti se vuoti): 0,90 $ a domanda, 15 $ al giorno, 150 $ al mese;
+          # obiettivo medio 0,50 $ a domanda.
           TETTO_DOMANDA_USD: ${{ vars.TETTO_DOMANDA_USD }}
           TETTO_GIORNO_USD: ${{ vars.TETTO_GIORNO_USD }}
           TETTO_MESE_USD: ${{ vars.TETTO_MESE_USD }}
+          # Interruttori delle fonti v2 (accese se vuote; "no" per spegnere).
+          FONTE_RISOLUZIONE: ${{ vars.FONTE_RISOLUZIONE }}
+          MERCATI: ${{ vars.MERCATI }}
+          SERIE_STORICHE: ${{ vars.SERIE_STORICHE }}
       - name: Salva il registro delle spese e delle previsioni
         if: always()
         run: |

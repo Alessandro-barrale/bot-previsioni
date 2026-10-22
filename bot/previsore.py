@@ -151,6 +151,18 @@ slip from the actor's record (soft clock rule).
 """
 
 
+class ChiusuraImminente(RuntimeError):
+    """La domanda chiude tra pochissimo: non si spende per una previsione che non arriverebbe in tempo."""
+
+
+def minuti_alla_chiusura(domanda: MetaculusQuestion, adesso: datetime | None = None) -> float | None:
+    if domanda.close_time is None:
+        return None
+    adesso = adesso or datetime.now(timezone.utc)
+    chiusura = domanda.close_time if domanda.close_time.tzinfo else domanda.close_time.replace(tzinfo=timezone.utc)
+    return (chiusura - adesso).total_seconds() / 60
+
+
 def chiave_domanda(domanda: MetaculusQuestion) -> str:
     return f"{domanda.id_of_post}-{domanda.id_of_question}"
 
@@ -232,7 +244,15 @@ class BotPrevisioni(FallTemplateBot2026):
         return report
 
     async def run_research(self, question: MetaculusQuestion) -> str:
-        ricerca = await self.ricercatore.ricerca(question)
+        minuti = minuti_alla_chiusura(question)
+        veloce = False
+        if minuti is not None:
+            if minuti < self.imp.minuti_salto:
+                raise ChiusuraImminente(f"chiude tra {minuti:.0f} minuti (sotto i {self.imp.minuti_salto}): saltata")
+            veloce = minuti < self.imp.minuti_via_veloce
+            if veloce:
+                logger.info(f"{question.page_url}: chiude tra {minuti:.0f} minuti, via veloce (solo web e mercati)")
+        ricerca = await self.ricercatore.ricerca(question, veloce=veloce)
         logger.info(f"Ricerca per {question.page_url}: {len(ricerca)} caratteri")
         return ricerca
 
@@ -460,4 +480,4 @@ def _in_dati(previsione: object) -> object:
     return str(previsione)
 
 
-__all__ = ["BotPrevisioni", "TettoSuperato", "chiave_domanda"]
+__all__ = ["BotPrevisioni", "ChiusuraImminente", "TettoSuperato", "chiave_domanda", "minuti_alla_chiusura"]

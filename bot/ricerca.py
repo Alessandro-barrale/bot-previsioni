@@ -1,9 +1,15 @@
 """
-Ricerca a più fonti e a più giri.
+Ricerca a più fonti e a più giri (v2).
 
-Giro 1: AskNews (notizie recenti + archivio) e ricerca web di Claude, in parallelo.
+Giro 1, in parallelo:
+- la fonte di risoluzione (pagine citate nei criteri, lette ORA);
+- i mercati di previsione (Polymarket, Manifold, Kalshi) abbinati da un modello economico;
+- le serie storiche (FRED, Yahoo Finance) per le domande numeriche;
+- AskNews (notizie recenti + archivio) e la ricerca web di Claude.
 Giro 2..N: un modello economico legge le note e scrive cosa manca; quelle
 domande vanno alla ricerca web.
+
+Via veloce (poco tempo alla chiusura): solo web e mercati, un giro.
 
 Ogni fonte riporta le date. Se una fonte fallisce si va avanti con le altre;
 se falliscono tutte, si usa la conoscenza del modello di ricerca (segnalandolo).
@@ -16,7 +22,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from forecasting_tools import MetaculusQuestion, clean_indents
+from forecasting_tools import DateQuestion, MetaculusQuestion, NumericQuestion, clean_indents
 
 from bot.config import Impostazioni, chiave_presente
 from bot.llm import LlmRegistrato
@@ -33,10 +39,13 @@ class EsitoRicerca:
     sezioni: list[str] = field(default_factory=list)
     fonti_fallite: list[str] = field(default_factory=list)
     fonti_usate: list[str] = field(default_factory=list)
+    veloce: bool = False
 
     def testo(self) -> str:
         oggi = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         parti = [f"Research compiled on {oggi}. Each item shows its source and date when known."]
+        if self.veloce:
+            parti.append("Note: the question closes soon, so this is the FAST research path (web and markets only).")
         parti += self.sezioni
         if self.fonti_fallite:
             parti.append("Sources that failed this time: " + ", ".join(self.fonti_fallite))
@@ -52,6 +61,9 @@ class Ricercatore:
         modello_riassunto: LlmRegistrato,
         cerca_web=None,
         cerca_notizie=None,
+        fonte_risoluzione=None,
+        mercati=None,
+        serie_storiche=None,
     ) -> None:
         self.imp = impostazioni
         self.registro = registro
@@ -60,6 +72,9 @@ class Ricercatore:
         # Le fonti sono iniettabili per i test (e per la prova offline).
         self._cerca_web = cerca_web if cerca_web is not None else self._fonte_web_predefinita()
         self._cerca_notizie = cerca_notizie if cerca_notizie is not None else self._fonte_notizie_predefinita()
+        self._fonte_risoluzione = fonte_risoluzione if fonte_risoluzione is not None else self._fonte_risoluzione_predefinita()
+        self._mercati = mercati if mercati is not None else self._mercati_predefiniti()
+        self._serie = serie_storiche if serie_storiche is not None else self._serie_predefinite()
 
     # ----------------------------------------------------------- fonti
     def _fonte_web_predefinita(self):
@@ -74,11 +89,40 @@ class Ricercatore:
     def _fonte_notizie_predefinita(self):
         if self.imp.modello_finto:
             return None
+        # AskNews accetta sia la coppia client id + secret sia la chiave singola ASKNEWS_API_KEY
+        # (AskNewsSearcher di forecasting-tools le gestisce entrambe).
         if (chiave_presente("ASKNEWS_CLIENT_ID") and chiave_presente("ASKNEWS_SECRET")) or chiave_presente(
             "ASKNEWS_API_KEY"
         ):
             return self._asknews
         return None
+
+    def _fonte_risoluzione_predefinita(self):
+        if self.imp.modello_finto or not self.imp.fonte_risoluzione:
+            return None
+        from bot.fonti.fonte_risoluzione import fonte_risoluzione
+
+        return fonte_risoluzione
+
+    def _mercati_predefiniti(self):
+        if self.imp.modello_finto or not self.imp.mercati:
+            return None
+        from bot.fonti.mercati import evidenza_mercati
+
+        async def mercati(domanda: MetaculusQuestion) -> str | None:
+            return await evidenza_mercati(domanda, self.modello_riassunto)
+
+        return mercati
+
+    def _serie_predefinite(self):
+        if self.imp.modello_finto or not self.imp.serie_storiche:
+            return None
+        from bot.fonti.serie_storiche import serie_storiche
+
+        async def serie(domanda: MetaculusQuestion) -> str | None:
+            return await serie_storiche(domanda, self.modello_riassunto)
+
+        return serie
 
     async def _asknews(self, domanda: str) -> str:
         from forecasting_tools import AskNewsSearcher
@@ -161,7 +205,8 @@ class Ricercatore:
             Today is {oggi}. You are a research assistant for a forecaster. Search the web and report
             the facts most useful for forecasting the question below. For every fact give the source
             and its publication date. Prefer recent, primary and official sources. Include base rates
-            (how often similar things happened before) and current trends. Do not give a forecast.
+            (how often similar things happened before), the current status of anything the question
+            depends on, and current trends. Do not give a forecast.
 
             Question: {domanda.question_text}
 
@@ -177,7 +222,8 @@ class Ricercatore:
     async def _prova(self, nome: str, coro, esito: EsitoRicerca) -> str | None:
         try:
             testo = await coro
-            esito.fonti_usate.append(nome)
+            if testo:
+                esito.fonti_usate.append(nome)
             return testo
         except TettoSuperato:
             raise
@@ -206,10 +252,18 @@ class Ricercatore:
         righe = [r.strip("-* ").strip() for r in risposta.splitlines() if r.strip().startswith(("-", "*"))]
         return "\n".join(f"- {r}" for r in righe[:3]) or None
 
-    async def ricerca(self, domanda: MetaculusQuestion) -> str:
-        esito = EsitoRicerca()
-        compiti = []
-        if self._cerca_notizie is not None:
+    async def ricerca(self, domanda: MetaculusQuestion, veloce: bool = False) -> str:
+        esito = EsitoRicerca(veloce=veloce)
+        numerica = isinstance(domanda, (NumericQuestion, DateQuestion)) and not isinstance(domanda, DateQuestion)
+        compiti: list[tuple[str, object]] = []
+        # Le fonti "strutturali" prima: fonte di risoluzione, mercati, serie storiche.
+        if self._fonte_risoluzione is not None and not veloce:
+            compiti.append(("resolution source", self._fonte_risoluzione(domanda)))
+        if self._mercati is not None:
+            compiti.append(("prediction markets", self._mercati(domanda)))
+        if self._serie is not None and numerica and not veloce:
+            compiti.append(("data series", self._serie(domanda)))
+        if self._cerca_notizie is not None and not veloce:
             compiti.append(("AskNews", self._cerca_notizie(domanda.question_text)))
         if self._cerca_web is not None:
             compiti.append(("web", self._cerca_web(self._richiesta_web(domanda, None))))
@@ -218,7 +272,7 @@ class Ricercatore:
             if testo:
                 esito.sezioni.append(f"## Source: {nome} (round 1)\n{testo}")
 
-        if self._cerca_web is not None and esito.sezioni:
+        if self._cerca_web is not None and esito.sezioni and not veloce:
             for giro in range(2, self.imp.giri_ricerca + 1):
                 mancante = await self._prova("analisi lacune", self._cosa_manca(domanda, "\n\n".join(esito.sezioni)), esito)
                 if not mancante:

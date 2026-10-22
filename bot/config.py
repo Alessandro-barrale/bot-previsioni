@@ -42,6 +42,11 @@ def _si(nome: str) -> bool:
     return os.getenv(nome, "").strip().lower() in {"1", "si", "sì", "true", "yes", "on"}
 
 
+def _acceso(nome: str) -> bool:
+    """Interruttore acceso per impostazione: si spegne solo scrivendo no/0/false/off."""
+    return os.getenv(nome, "").strip().lower() not in {"0", "no", "false", "off", "spento"}
+
+
 @dataclass
 class Impostazioni:
     # Invio vero delle previsioni a Metaculus: spento finché l'utente non lo accende.
@@ -58,12 +63,21 @@ class Impostazioni:
     # Ricerca
     giri_ricerca: int = 2
     ricerche_web_per_giro: int = 3
+    # Fonti v2, ognuna con il suo interruttore (FONTE_RISOLUZIONE, MERCATI, SERIE_STORICHE = no per spegnere).
+    fonte_risoluzione: bool = True
+    mercati: bool = True
+    serie_storiche: bool = True
 
-    # Tetti di spesa in dollari
-    tetto_domanda: float = 0.80
+    # Tempo: le domande restano aperte 3 ore. Sotto i 12 minuti si salta (una previsione
+    # non pubblicata vale zero), sotto i 40 si fa la via veloce (solo web e mercati).
+    minuti_salto: int = 12
+    minuti_via_veloce: int = 40
+
+    # Tetti di spesa in dollari (v2: media obiettivo 0,50, massimo 0,90 a domanda, 150 al mese)
+    tetto_domanda: float = 0.90
     tetto_giorno: float = 15.0
-    tetto_mese: float = 120.0
-    obiettivo_medio_domanda: float = 0.40
+    tetto_mese: float = 150.0
+    obiettivo_medio_domanda: float = 0.50
 
     domande_in_parallelo: int = 3
     percorso_registro: Path = CARTELLA_PROGETTO / "dati" / "registro.sqlite"
@@ -82,10 +96,15 @@ class Impostazioni:
             previsioni_per_domanda=_int("PREVISIONI_PER_DOMANDA", 5),
             giri_ricerca=_int("GIRI_RICERCA", 2),
             ricerche_web_per_giro=_int("RICERCHE_WEB_PER_GIRO", 3),
-            tetto_domanda=_float("TETTO_DOMANDA_USD", 0.80),
+            fonte_risoluzione=_acceso("FONTE_RISOLUZIONE"),
+            mercati=_acceso("MERCATI"),
+            serie_storiche=_acceso("SERIE_STORICHE"),
+            minuti_salto=_int("MINUTI_SALTO", 12),
+            minuti_via_veloce=_int("MINUTI_VIA_VELOCE", 40),
+            tetto_domanda=_float("TETTO_DOMANDA_USD", 0.90),
             tetto_giorno=_float("TETTO_GIORNO_USD", 15.0),
-            tetto_mese=_float("TETTO_MESE_USD", 120.0),
-            obiettivo_medio_domanda=_float("OBIETTIVO_MEDIO_DOMANDA_USD", 0.40),
+            tetto_mese=_float("TETTO_MESE_USD", 150.0),
+            obiettivo_medio_domanda=_float("OBIETTIVO_MEDIO_DOMANDA_USD", 0.50),
             domande_in_parallelo=_int("DOMANDE_IN_PARALLELO", 3),
             percorso_registro=Path(percorso) if percorso else CARTELLA_PROGETTO / "dati" / "registro.sqlite",
         )

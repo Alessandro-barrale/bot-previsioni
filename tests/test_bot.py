@@ -166,3 +166,96 @@ async def test_prompt_numerico_chiede_13_percentili_e_scoring(tmp_path):
     assert "status quo is that it does NOT happen" in date[0] and '"2.5": "2027-03-15"' in date[0]
     previsione = registro.interroga("SELECT previsione FROM previsioni WHERE tipo='numeric'")[0][0]
     assert '"p2.5"' in previsione and '"p97.5"' in previsione
+
+
+# ------------------------------------------------------------ ricerca v2
+async def fonte_ok(domanda):
+    return "What the resolution source says NOW: page text (2026-10-20)"
+
+
+async def mercati_ok(domanda):
+    return "Prediction markets: - [Polymarket] x 40% yes, weak"
+
+
+async def serie_ok(domanda):
+    return "Historical data series: latest 100"
+
+
+def costruisci_v2(tmp_path, **fonti):
+    bot, registro = costruisci(tmp_path)
+    r = bot.ricercatore
+    bot.ricercatore = Ricercatore(
+        r.imp, registro, r.modello_ricerca, r.modello_riassunto, cerca_web=web_ok, cerca_notizie=notizie_ok,
+        fonte_risoluzione=fonti.get("fonte_risoluzione", fonte_ok), mercati=fonti.get("mercati", mercati_ok),
+        serie_storiche=fonti.get("serie_storiche", serie_ok),
+    )
+    return bot, registro
+
+
+async def test_ricerca_v2_ordine_delle_sezioni_e_serie_solo_numeriche(tmp_path):
+    bot, _ = costruisci_v2(tmp_path)
+    binaria, numerica = domande_di_prova()[0], domande_di_prova()[1]
+    testo = await bot.ricercatore.ricerca(binaria)
+    posizioni = [testo.index(s) for s in ("Source: resolution source", "Source: prediction markets", "Source: AskNews", "Source: web (round 1)", "Source: web (round 2")]
+    assert posizioni == sorted(posizioni)
+    assert "Source: data series" not in testo
+    testo = await bot.ricercatore.ricerca(numerica)
+    assert "Source: data series" in testo
+
+
+async def test_ricerca_v2_fonte_nuova_guasta_non_blocca(tmp_path):
+    bot, _ = costruisci_v2(tmp_path, mercati=guasta, fonte_risoluzione=guasta)
+    testo = await bot.ricercatore.ricerca(domande_di_prova()[0])
+    assert "prediction markets (ConnectionError)" in testo and "resolution source (ConnectionError)" in testo
+    assert "Source: web (round 1)" in testo
+    rapporti = await bot.forecast_questions(domande_di_prova()[:1], return_exceptions=True)
+    assert not isinstance(rapporti[0], BaseException)
+
+
+async def test_via_veloce_solo_web_e_mercati(tmp_path):
+    bot, registro = costruisci_v2(tmp_path)
+    testo = await bot.ricercatore.ricerca(domande_di_prova()[1], veloce=True)
+    assert "FAST research path" in testo
+    assert "Source: prediction markets" in testo and "Source: web (round 1)" in testo
+    assert "resolution source" not in testo and "data series" not in testo and "AskNews" not in testo
+    assert "round 2" not in testo
+    assert registro.interroga("SELECT COUNT(*) FROM chiamate WHERE scopo='riassunto'")[0][0] == 0
+
+
+async def test_tempo_alla_chiusura_salto_e_via_veloce(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from bot.previsore import ChiusuraImminente, minuti_alla_chiusura
+
+    bot, registro = costruisci_v2(tmp_path)
+    domanda = domande_di_prova()[0]
+    domanda.close_time = datetime.now(timezone.utc) + timedelta(minutes=5)
+    assert 4 < minuti_alla_chiusura(domanda) <= 5
+    rapporti = await bot.forecast_questions([domanda], return_exceptions=True)
+    assert isinstance(rapporti[0], BaseException) and "ChiusuraImminente" in repr(rapporti[0]) + type(rapporti[0]).__name__ + str(rapporti[0])
+    assert registro.interroga("SELECT COUNT(*) FROM chiamate")[0][0] == 0
+    errore = registro.interroga("SELECT errore FROM previsioni")[0][0]
+    assert "ChiusuraImminente" in errore
+
+    domanda.close_time = datetime.now(timezone.utc) + timedelta(minutes=30)
+    testo = await bot.run_research(domanda)
+    assert "FAST research path" in testo
+
+    domanda.close_time = None
+    assert minuti_alla_chiusura(domanda) is None
+    testo = await bot.run_research(domanda)
+    assert "FAST research path" not in testo
+
+
+def test_interruttori_e_tetti_v2(monkeypatch):
+    for nome in ("FONTE_RISOLUZIONE", "MERCATI", "SERIE_STORICHE", "TETTO_DOMANDA_USD", "TETTO_MESE_USD"):
+        monkeypatch.delenv(nome, raising=False)
+    imp = Impostazioni.da_ambiente()
+    assert imp.fonte_risoluzione and imp.mercati and imp.serie_storiche
+    assert imp.tetto_domanda == 0.90 and imp.tetto_mese == 150.0 and imp.obiettivo_medio_domanda == 0.50
+    assert imp.minuti_salto == 12 and imp.minuti_via_veloce == 40
+    monkeypatch.setenv("MERCATI", "no")
+    monkeypatch.setenv("MODELLO_FINTO", "no")
+    imp = Impostazioni.da_ambiente()
+    assert imp.mercati is False and imp.fonte_risoluzione is True
+    r = Ricercatore(imp, Registro(":memory:", 1, 1, 1) if False else None, None, None, cerca_web=web_ok, cerca_notizie=notizie_ok) if False else None
