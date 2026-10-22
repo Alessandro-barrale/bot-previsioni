@@ -8,6 +8,10 @@ on:
         description: "Prova anche sulle domande dell'area di prova di Metaculus (spende crediti dei modelli)"
         type: boolean
         default: false
+      market_pulse:
+        description: "Prova Market Pulse senza invio (al massimo 3 sotto-domande, spende crediti dei modelli)"
+        type: boolean
+        default: false
 
 jobs:
   prova:
@@ -52,3 +56,15 @@ jobs:
           ASKNEWS_SECRET: ${{ secrets.ASKNEWS_SECRET }}
           ASKNEWS_API_KEY: ${{ secrets.ASKNEWS_API_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      - name: Prova Market Pulse (senza invio, al massimo 3 sotto-domande)
+        if: inputs.market_pulse
+        run: uv run --no-sync python main.py --modo market_pulse
+        env:
+          INVIA_PREVISIONI: "no"
+          PERCORSO_REGISTRO: /tmp/prova-mp.sqlite
+          MP_DOMANDE_PER_GIRO: "3"
+          METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ASKNEWS_API_KEY: ${{ secrets.ASKNEWS_API_KEY }}
+          MODELLI_PREVISIONE: ${{ vars.MODELLI_PREVISIONE }}
+          SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
