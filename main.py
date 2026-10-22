@@ -7,6 +7,8 @@ Avvio del bot.
     uv run python main.py --modo rapporto             # rapporto settimanale in rapporti/
     uv run python main.py --modo pagella              # pagella: noi contro la community (serve METACULUS_TOKEN)
     uv run python main.py --modo torneo --bot 2       # bot secondario (METACULUS_TOKEN_2, registro separato)
+    uv run python main.py --modo market_pulse         # Market Pulse: sotto-domande di gruppo, prima previsione
+                                                      # e un aggiornamento nelle ultime 6 ore (solo bot principale)
 
 L'invio a Metaculus parte solo se INVIA_PREVISIONI=si (variabile del repository
 in GitHub, oppure .env in locale). Con il modo prova_offline non si invia mai.
@@ -33,7 +35,7 @@ from bot.config import Impostazioni  # noqa: E402
 from bot.llm import crea_llm  # noqa: E402
 from bot.previsore import BotPrevisioni, chiave_domanda  # noqa: E402
 from bot.ricerca import Ricercatore  # noqa: E402
-from bot.spese import Registro  # noqa: E402
+from bot.spese import Registro, TettiTorneo  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +73,18 @@ async def _fonte_guasta(_: str) -> str:
     raise ConnectionError("fonte simulata non raggiungibile")
 
 
-def costruisci_bot(imp: Impostazioni, registro: Registro, torneo: str | None, prova_offline: bool, guasto: bool, rifai: bool) -> BotPrevisioni:
+def crea_registro(imp: Impostazioni) -> Registro:
+    """Il registro principale, con i tetti propri di Market Pulse (contati filtrando per torneo)."""
+    from bot.market_pulse import NOME_TORNEO, PASSATE_MASSIME
+
+    propri = TettiTorneo(mese=imp.tetto_mese_mp, giorno=imp.tetto_giorno_mp, domanda_totale=PASSATE_MASSIME * imp.tetto_domanda)
+    return Registro(imp.percorso_registro, imp.tetto_domanda, imp.tetto_giorno, imp.tetto_mese, tetti_torneo={NOME_TORNEO: propri})
+
+
+def costruisci_bot(
+    imp: Impostazioni, registro: Registro, torneo: str | None, prova_offline: bool, guasto: bool, rifai: bool,
+    market_pulse: bool = False,
+) -> BotPrevisioni:
     finto = imp.modello_finto
     modelli = [crea_llm(m, registro, "previsione", finto) for m in imp.modelli_previsione]
     ricerca = crea_llm(imp.modello_ricerca, registro, "ricerca", finto)
@@ -81,6 +94,29 @@ def costruisci_bot(imp: Impostazioni, registro: Registro, torneo: str | None, pr
         fonti = _fonti_finte(registro, imp)
     if guasto:
         fonti["cerca_notizie"] = _fonte_guasta
+    if market_pulse:
+        from bot import market_pulse as mp
+
+        # Risultati trimestrali al posto delle serie generiche (stesso interruttore SERIE_STORICHE)
+        # e la guida del primo giro web.
+        if not finto and imp.serie_storiche:
+            from bot.fonti.trimestrali import trimestrali
+
+            async def fonte_trimestrali(domanda):
+                return await trimestrali(domanda, riassunto)
+
+            fonti["trimestrali"] = fonte_trimestrali
+        fonti["guida_web"] = mp.guida_web
+        ricercatore = Ricercatore(imp, registro, ricerca, riassunto, **fonti)
+        return mp.BotMarketPulse(
+            impostazioni=imp,
+            registro=registro,
+            modelli_previsione=modelli,
+            modello_ricerca=ricerca,
+            modello_riassunto=riassunto,
+            ricercatore=ricercatore,
+            massimo_per_giro=imp.mp_domande_per_giro,
+        )
     ricercatore = Ricercatore(imp, registro, ricerca, riassunto, **fonti)
     return BotPrevisioni(
         impostazioni=imp,
@@ -131,7 +167,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Bot di previsioni per Metaculus FutureEval")
     parser.add_argument(
         "--modo",
-        choices=["torneo", "stagione", "minibench", "test_questions", "prova_offline", "rapporto", "pagella"],
+        choices=["torneo", "stagione", "minibench", "test_questions", "prova_offline", "rapporto", "pagella", "market_pulse"],
         default="torneo",
     )
     parser.add_argument("--guasto", action="store_true", help="prova: simula una fonte di ricerca che non risponde")
@@ -140,6 +176,10 @@ def main() -> int:
         help="2 = bot secondario (METACULUS_TOKEN_2, registro dati/registro_v2.sqlite), per i test A/B",
     )
     args = parser.parse_args()
+    if args.modo == "market_pulse" and args.bot != 1:
+        # Regola del torneo: si entra una volta sola. Solo il bot principale (quello premiato).
+        print("Market Pulse si fa una volta sola, con il bot principale: --bot 2 non è ammesso.")
+        return 1
     if args.bot == 2 and not configura_bot_secondario():
         print("Manca METACULUS_TOKEN_2: il bot secondario non parte.")
         return 1
@@ -175,8 +215,13 @@ def main() -> int:
     print_startup_banner(args.modo, will_publish=imp.invia_previsioni)
     print(f"Modelli di previsione: {', '.join(imp.modelli_previsione)}")
     print(f"Tetti: {imp.tetto_domanda:.2f} $/domanda, {imp.tetto_giorno:.2f} $/giorno, {imp.tetto_mese:.2f} $/mese\n")
+    if args.modo == "market_pulse":
+        print(
+            f"Market Pulse ({imp.torneo_market_pulse}): tetti propri {imp.tetto_mese_mp:.2f} $/mese e "
+            f"{imp.tetto_giorno_mp:.2f} $/giorno, al massimo {imp.mp_domande_per_giro} sotto-domande per giro\n"
+        )
 
-    registro = Registro(imp.percorso_registro, imp.tetto_domanda, imp.tetto_giorno, imp.tetto_mese)
+    registro = crea_registro(imp)
     rapporti: list = []
     domande_fatte: list = []
     try:
@@ -185,6 +230,14 @@ def main() -> int:
 
             bot = costruisci_bot(imp, registro, "prova_offline", True, args.guasto, rifai=True)
             domande = domande_di_prova()
+            rapporti = asyncio.run(bot.forecast_questions(domande, return_exceptions=True))
+            domande_fatte = domande
+        elif args.modo == "market_pulse":
+            from bot import market_pulse as mp
+
+            client = MetaculusClient()
+            domande = mp.domande_aperte(client, imp.torneo_market_pulse)
+            bot = costruisci_bot(imp, registro, mp.NOME_TORNEO, False, args.guasto, rifai=True, market_pulse=True)
             rapporti = asyncio.run(bot.forecast_questions(domande, return_exceptions=True))
             domande_fatte = domande
         else:
@@ -207,7 +260,10 @@ def main() -> int:
     finally:
         registro.chiudi()
 
-    print_run_summary_banner(rapporti, will_publish=imp.invia_previsioni, tournament_url=URL_TORNEI.get(args.modo))
+    url = URL_TORNEI.get(args.modo)
+    if args.modo == "market_pulse":
+        url = f"https://www.metaculus.com/tournament/{imp.torneo_market_pulse}/"
+    print_run_summary_banner(rapporti, will_publish=imp.invia_previsioni, tournament_url=url)
     # Le domande saltate (errori, tetti) non devono far fallire il giro: il bot riprova al giro dopo.
     # Se però falliscono tutte, il giro è rosso: di solito è una chiave sbagliata, e GitHub manda l'email.
     # Un tetto di spesa raggiunto invece è previsto e resta verde.

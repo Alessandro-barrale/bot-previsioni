@@ -15,7 +15,7 @@ from pathlib import Path
 
 import requests
 
-from bot.config import CARTELLA_PROGETTO, Impostazioni, chiave_presente
+from bot.config import CARTELLA_PROGETTO, TORNEO_MARKET_PULSE_PREDEFINITO, Impostazioni, chiave_presente
 from bot.spese import Registro
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,8 @@ API = "https://www.metaculus.com/api"
 TORNEI = {
     "stagione": ("fall-futureeval-2026", 50_000),
     "minibench": ("minibench", 1_000),
+    # In classifica solo se il bot ha già previsto lì (registro con torneo market_pulse).
+    "market_pulse": (os.getenv("TORNEO_MARKET_PULSE") or TORNEO_MARKET_PULSE_PREDEFINITO, 7_500),
 }
 PREMIO_MINIMO_PAGATO = 50
 
@@ -120,6 +122,8 @@ def scrivi_rapporto(
             " GROUP BY substr(errore,1,60) ORDER BY 2 DESC LIMIT 3",
             (inizio,),
         )
+        market_pulse = registro.interroga("SELECT COUNT(*) FROM previsioni WHERE torneo = 'market_pulse'")[0][0] > 0
+        spesa_mp = registro.spesa_mese_torneo("market_pulse", adesso)
     finally:
         registro.chiudi()
 
@@ -139,6 +143,8 @@ def scrivi_rapporto(
     righe.append(f"- Mese {mese}: {spesa_mese:.2f} $ su un tetto di {imp.tetto_mese:.0f} $.")
     if media is not None:
         righe.append(f"- Media per domanda: {media:.2f} $ (obiettivo {imp.obiettivo_medio_domanda:.2f} $).")
+    if market_pulse:
+        righe.append(f"- Market Pulse, mese {mese}: {spesa_mp:.2f} $ su un tetto proprio di {imp.tetto_mese_mp:.0f} $.")
 
     righe += ["", "## Pagella: noi contro la community (domande risolte)"]
     try:
@@ -153,6 +159,8 @@ def scrivi_rapporto(
     if chiave_presente("METACULUS_TOKEN"):
         nome_utente = _mio_nome_utente()
         for torneo in TORNEI:
+            if torneo == "market_pulse" and not market_pulse:
+                continue
             righe.append(classifica(torneo, nome_utente))
         righe.append(
             "- I punteggi arrivano solo quando le domande si chiudono e si risolvono: nelle prime settimane è normale vederli vuoti."

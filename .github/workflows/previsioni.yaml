@@ -57,6 +57,40 @@ jobs:
           MERCATI: ${{ vars.MERCATI }}
           KALSHI: ${{ vars.KALSHI }}
           SERIE_STORICHE: ${{ vars.SERIE_STORICHE }}
+      # Market Pulse 26Q4 (7.500 $, bot ammessi ai premi), solo con il bot principale:
+      # sotto-domande numeriche di gruppo su trimestrali; prima previsione quando la
+      # sotto-domanda compare, un aggiornamento nelle ultime 6 ore prima dello spot scoring.
+      # Parte solo con MARKET_PULSE_ATTIVO = si (lo accende la direzione); un suo errore non
+      # rende rosso il giro. Tetti propri contati sul registro principale filtrando per torneo:
+      # TETTO_MESE_MP_USD (30 $ se vuota), TETTO_GIORNO_MP_USD (8 $), dentro i tetti generali.
+      # Senza sotto-domande da fare finisce in pochi secondi: nessun minuto in piu' che conti.
+      - name: Market Pulse (sotto-domande di gruppo, aggiornamento prima dello spot scoring)
+        if: vars.MARKET_PULSE_ATTIVO == 'si'
+        continue-on-error: true
+        timeout-minutes: 40
+        run: uv run --no-sync python main.py --modo market_pulse
+        env:
+          METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ASKNEWS_CLIENT_ID: ${{ secrets.ASKNEWS_CLIENT_ID }}
+          ASKNEWS_SECRET: ${{ secrets.ASKNEWS_SECRET }}
+          ASKNEWS_API_KEY: ${{ secrets.ASKNEWS_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          INVIA_PREVISIONI: ${{ vars.INVIA_PREVISIONI }}
+          MODELLI_PREVISIONE: ${{ vars.MODELLI_PREVISIONE }}
+          TETTO_DOMANDA_USD: ${{ vars.TETTO_DOMANDA_USD }}
+          TETTO_GIORNO_USD: ${{ vars.TETTO_GIORNO_USD }}
+          TETTO_MESE_USD: ${{ vars.TETTO_MESE_USD }}
+          TETTO_MESE_MP_USD: ${{ vars.TETTO_MESE_MP_USD }}
+          TETTO_GIORNO_MP_USD: ${{ vars.TETTO_GIORNO_MP_USD }}
+          MP_DOMANDE_PER_GIRO: ${{ vars.MP_DOMANDE_PER_GIRO }}
+          TORNEO_MARKET_PULSE: ${{ vars.TORNEO_MARKET_PULSE }}
+          SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
+          FONTE_RISOLUZIONE: ${{ vars.FONTE_RISOLUZIONE }}
+          MERCATI: ${{ vars.MERCATI }}
+          KALSHI: ${{ vars.KALSHI }}
+          SERIE_STORICHE: ${{ vars.SERIE_STORICHE }}
       # Bot secondario (antivex-bot-2, non premiato): test A/B sul solo MiniBench.
       # Stesso prompt e stessi modelli della primaria, ma ricerca solo web (come la v1):
       # misura quanto valgono le fonti nuove (pagina di risoluzione, mercati, serie, AskNews).

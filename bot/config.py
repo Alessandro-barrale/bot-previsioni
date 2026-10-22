@@ -11,6 +11,10 @@ from pathlib import Path
 
 CARTELLA_PROGETTO = Path(__file__).resolve().parent.parent
 
+# Market Pulse 26Q4 (7.500 $, bot ammessi ai premi): slug del torneo, sostituibile con
+# la variabile TORNEO_MARKET_PULSE (forecasting-tools 0.3.4 lo chiama CURRENT_MARKET_PULSE_ID).
+TORNEO_MARKET_PULSE_PREDEFINITO = "market-pulse-26q4"
+
 _SEGNAPOSTO = {"", "REPLACE_ME", "1234567890", "your-token-here", "your-api-key-here"}
 
 
@@ -84,6 +88,13 @@ class Impostazioni:
     domande_in_parallelo: int = 3
     percorso_registro: Path = CARTELLA_PROGETTO / "dati" / "registro.sqlite"
 
+    # Market Pulse: slug, tetti propri (contati sul registro principale filtrando per
+    # torneo, e dentro i tetti generali) e quante sotto-domande al massimo per giro.
+    torneo_market_pulse: str = TORNEO_MARKET_PULSE_PREDEFINITO
+    tetto_mese_mp: float = 30.0
+    tetto_giorno_mp: float = 8.0
+    mp_domande_per_giro: int = 12
+
     @classmethod
     def da_ambiente(cls) -> "Impostazioni":
         finto = _si("MODELLO_FINTO")
@@ -112,6 +123,10 @@ class Impostazioni:
             obiettivo_medio_domanda=_float("OBIETTIVO_MEDIO_DOMANDA_USD", 0.50),
             domande_in_parallelo=_int("DOMANDE_IN_PARALLELO", 3),
             percorso_registro=Path(percorso) if percorso else CARTELLA_PROGETTO / "dati" / "registro.sqlite",
+            torneo_market_pulse=(os.getenv("TORNEO_MARKET_PULSE") or "").strip() or TORNEO_MARKET_PULSE_PREDEFINITO,
+            tetto_mese_mp=_float("TETTO_MESE_MP_USD", 30.0),
+            tetto_giorno_mp=_float("TETTO_GIORNO_MP_USD", 8.0),
+            mp_domande_per_giro=_int("MP_DOMANDE_PER_GIRO", 12),
         )
 
 
