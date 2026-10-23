@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       origine:
-        description: "Chi avvia il giro: cron-job (sveglia automatica) o vuoto (a mano)"
+        description: "Scrivi manuale se lo avvii a mano (vuoto = sveglia automatica)"
         required: false
         default: ""
   schedule:
@@ -150,7 +150,9 @@ jobs:
           GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/azienda_key -o IdentitiesOnly=yes" git clone -q git@github.com:Alessandro-barrale/azienda-ai.git "$RUNNER_TEMP/azienda"
           export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/lab_key -o IdentitiesOnly=yes"
           git clone -q git@github.com:Alessandro-barrale/ai-company-lab.git "$RUNNER_TEMP/lab"
-          if [ "$EVENTO" = "schedule" ] || [ "$ORIGINE" = "cron-job" ]; then T=scheduled; else T=manual; fi
+          # Le sveglie automatiche (cron-job.org, PC, cron di GitHub) non passano parametri: giro automatico.
+          # Chi avvia a mano scrive "manuale" nel campo origine.
+          if [ "$ORIGINE" = "manuale" ]; then T=manual; else T=scheduled; fi
           PRIMO_AMBIENTE=cloud LAB_DIR="$RUNNER_TEMP/lab" AZIENDA_DIR="$RUNNER_TEMP/azienda" BOT_DIR="$GITHUB_WORKSPACE"             PRIMO_TRIGGER="$T" PRIMO_LOG="$RUNNER_TEMP/sincro.log" python3 "$RUNNER_TEMP/azienda/strumenti/sincronizza_lab.py"
           { echo "### Writer di PRIMO"; cat "$RUNNER_TEMP/sincro.log"; } >> "$GITHUB_STEP_SUMMARY"
           rm -f "$RUNNER_TEMP/lab_key" "$RUNNER_TEMP/azienda_key"
