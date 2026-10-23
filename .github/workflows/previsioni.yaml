@@ -143,7 +143,7 @@ jobs:
           ORIGINE: ${{ inputs.origine }}
         run: |
           set -e
-          mkdir -p ~/.ssh && ssh-keyscan -q github.com >> ~/.ssh/known_hosts 2>/dev/null
+          mkdir -p ~/.ssh && ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
           umask 077
           echo "$LAB_WRITE_KEY" > "$RUNNER_TEMP/lab_key"
           echo "$AZIENDA_READ_KEY" > "$RUNNER_TEMP/azienda_key"
