@@ -11,6 +11,11 @@ name: Previsioni (torneo stagionale + MiniBench)
 # delle domande vere (2-3 minuti l'una): circa 1.850 al mese.
 on:
   workflow_dispatch:
+    inputs:
+      origine:
+        description: "Chi avvia il giro: cron-job (sveglia automatica) o vuoto (a mano)"
+        required: false
+        default: ""
   schedule:
     - cron: "17 */6 * * *"
 
@@ -21,6 +26,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   previsioni:
@@ -28,6 +34,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -120,3 +128,29 @@ jobs:
           git commit -m "Registro: giro del $(date -u +%Y-%m-%dT%H:%M)Z"
           git pull --rebase --quiet
           git push --quiet
+      # Writer di PRIMO verso ai-company-lab: unico responsabile della sincronizzazione, nel cloud.
+      # Scrive solo claude/status.json e claude/runs/ (chiave di deploy limitata a quel repository),
+      # legge azienda-ai con una chiave di deploy di sola lettura. Un suo errore non rende rosso il giro.
+      - name: Sincronizza ai-company-lab (writer di PRIMO)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          LAB_WRITE_KEY: ${{ secrets.LAB_WRITE_KEY }}
+          AZIENDA_READ_KEY: ${{ secrets.AZIENDA_READ_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          EVENTO: ${{ github.event_name }}
+          ORIGINE: ${{ inputs.origine }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh && ssh-keyscan -q github.com >> ~/.ssh/known_hosts 2>/dev/null
+          umask 077
+          echo "$LAB_WRITE_KEY" > "$RUNNER_TEMP/lab_key"
+          echo "$AZIENDA_READ_KEY" > "$RUNNER_TEMP/azienda_key"
+          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/azienda_key -o IdentitiesOnly=yes" git clone -q git@github.com:Alessandro-barrale/azienda-ai.git "$RUNNER_TEMP/azienda"
+          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/lab_key -o IdentitiesOnly=yes"
+          git clone -q git@github.com:Alessandro-barrale/ai-company-lab.git "$RUNNER_TEMP/lab"
+          if [ "$EVENTO" = "schedule" ] || [ "$ORIGINE" = "cron-job" ]; then T=scheduled; else T=manual; fi
+          PRIMO_AMBIENTE=cloud LAB_DIR="$RUNNER_TEMP/lab" AZIENDA_DIR="$RUNNER_TEMP/azienda" BOT_DIR="$GITHUB_WORKSPACE"             PRIMO_TRIGGER="$T" PRIMO_LOG="$RUNNER_TEMP/sincro.log" python3 "$RUNNER_TEMP/azienda/strumenti/sincronizza_lab.py"
+          { echo "### Writer di PRIMO"; cat "$RUNNER_TEMP/sincro.log"; } >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$RUNNER_TEMP/lab_key" "$RUNNER_TEMP/azienda_key"
