@@ -31,3 +31,11 @@ try {
 if ((Get-Content $log | Measure-Object -Line).Lines -gt 600) {
     Get-Content $log -Tail 500 | Set-Content $log
 }
+
+# Writer di PRIMO verso ai-company-lab (claude/status.json e claude/runs/): stesso ciclo, nessun timer nuovo.
+# Scrive solo se la revisione sale; un errore viene registrato nel suo diario e non ferma la sveglia.
+$writer = "D:\Idee Claude\obiettivo-200\azienda\strumenti\sincronizza_lab.py"
+$python = "C:\Users\User\AppData\Local\Programs\Python\Python313\python.exe"
+if (Test-Path $writer) {
+    try { & $python -I -X utf8 $writer --trigger scheduled *> $null } catch { Add-Content $log "$ora  writer lab: errore $_" }
+}
