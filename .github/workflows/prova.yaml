@@ -22,10 +22,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - name: Controllo delle chiavi (stampa solo l'inizio e la lunghezza)
+      - name: Controllo delle chiavi (stampa solo la lunghezza)
         run: |
           k="$ANTHROPIC_API_KEY"
-          echo "ANTHROPIC_API_KEY: inizia con '${k:0:10}', lunga ${#k} caratteri"
+          echo "ANTHROPIC_API_KEY: lunga ${#k} caratteri"
           case "$k" in *[[:space:]]*) echo "ATTENZIONE: la chiave contiene spazi o a capo";; esac
           code=$(curl -s -o /dev/null -w '%{http_code}' https://api.anthropic.com/v1/models \
             -H "x-api-key: $k" -H "anthropic-version: 2023-06-01")
