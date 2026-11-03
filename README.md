@@ -33,7 +33,7 @@ Il lunedì il **rapporto** aggiunge la **pagella viva**: per ogni domanda risolt
 | 1 | Crea l'account Metaculus, poi il bot dalla pagina *Participate* e copia il suo token | https://www.metaculus.com/futureeval/participate/ | 10 min |
 | 2 | Compila il modulo di partecipazione e chiedi i crediti gratuiti per i modelli | link nella pagina Participate | 10 min |
 | 3 | (Facoltativo) Crea l'account AskNews e prendi la chiave `ASKNEWS_API_KEY` | https://asknews.app/ | 5 min |
-| 4 | Collega un'organizzazione della Console all'abbonamento Max: arrivano 200 $ al mese di crediti API. Ogni abbonamento si collega a una sola organizzazione e dopo non puoi cambiarla da solo, quindi scegli quella che userai per tutti i progetti | claude.ai → Impostazioni → Fatturazione → Crediti API | 5 min |
+| 4 | Collega un'organizzazione della Console all'abbonamento Max: arrivano 100 $ al mese di crediti API ([fonte](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers); 200 $ sono solo con Ultra). Ogni abbonamento si collega a una sola organizzazione e dopo non puoi cambiarla da solo, quindi scegli quella che userai per tutti i progetti | claude.ai → Impostazioni → Fatturazione → Crediti API | 5 min |
 | 5 | Nella Console crea uno spazio di lavoro "bot-previsioni" con un tetto di spesa di 150 $ al mese, e lì crea la chiave API | https://platform.claude.com/ → Workspaces | 5 min |
 | 6 | Crea un repository **privato** su GitHub e caricaci questa cartella (senza `.env` e senza `.venv`, già esclusi) | github.com → New repository | 5 min |
 | 7 | Inserisci i segreti e le variabili (tabella sotto) | Settings → Secrets and variables → Actions | 5 min |
@@ -61,8 +61,8 @@ Senza chiavi dei modelli il bot usa il proxy di Metaculus con il solo `METACULUS
 |---|---|---|
 | `INVIA_PREVISIONI` | (vuoto = no) | `si` per inviare davvero le previsioni a Metaculus |
 | `TETTO_DOMANDA_USD` | `0.90` | spesa massima per una domanda (obiettivo medio 0,50 $) |
-| `TETTO_GIORNO_USD` | `15` | spesa massima al giorno |
-| `TETTO_MESE_USD` | `150` | spesa massima al mese |
+| `TETTO_GIORNO_USD` | `15` | spesa massima al giorno (dal 3/11/2026 la variabile del repository è `3`) |
+| `TETTO_MESE_USD` | `150` | spesa massima al mese (dal 3/11/2026 la variabile del repository è `75`) |
 | `MODELLI_PREVISIONE` | vedi sopra | lista separata da virgole in formato litellm; sostituisce il roster predefinito |
 | `ROSTER_3_VENDOR` | `si` | `no` per restare su 3 Opus + 2 Sonnet anche con la chiave OpenRouter |
 | `MODELLO_OPENAI`, `MODELLO_GOOGLE` | `openai/gpt-5.6-sol`, `google/gemini-3.7-flash` | i due modelli del roster via OpenRouter (nomi da openrouter.ai/models, per esempio `openai/gpt-6.1-sol`, `google/gemini-4-argon`) |
@@ -96,7 +96,7 @@ Il passo *Market Pulse* del workflow **Previsioni** gira dopo il torneo principa
 4. **Prompt.** Nota in più per queste domande: i ricavi trimestrali delle grandi aziende sono una serie "amministrata", prevedibile dal consenso e dalla guidance; centro sul consenso (o sulla guidance più recente) spostato della sorpresa tipica dell'azienda, larghezza dalla storia dei beat/miss (non dalla volatilità del titolo), massa oltre i limiti aperti lasciata. All'aggiornamento il prompt dice che è l'aggiornamento prima dello spot scoring.
 5. **Registro.** Lo stesso `dati/registro.sqlite` del torneo principale (lo salva il passo finale). Ogni chiamata porta il torneo (colonna nuova `torneo`, aggiunta da sola ai registri vecchi); solo in Market Pulse ci possono essere due previsioni per la stessa domanda, negli altri tornei resta una.
 
-**Tetti.** `TETTO_MESE_MP_USD` (30 $) e `TETTO_GIORNO_MP_USD` (8 $, così il torneo principale ha sempre almeno 7 dei 15 $ al giorno) contati filtrando per torneo, e comunque dentro i tetti generali: la spesa di Market Pulse si somma a quella del torneo principale nel `TETTO_MESE_USD`. Il tetto per domanda vale per ogni passata, con un massimo di 2 × `TETTO_DOMANDA_USD` sul totale della domanda. Vicino a un tetto proprio (ultimi 2 × `TETTO_DOMANDA_USD`, al massimo un quarto del tetto) le prime previsioni aspettano e restano solo gli aggiornamenti, che sono quelli che contano allo spot scoring.
+**Tetti.** `TETTO_MESE_MP_USD` (30 $) e `TETTO_GIORNO_MP_USD` (8 $, così il torneo principale ha sempre almeno 7 dei 15 $ al giorno; dal 3/11/2026 la variabile è `1`, così il principale ha almeno 2 dei 3 $) contati filtrando per torneo, e comunque dentro i tetti generali: la spesa di Market Pulse si somma a quella del torneo principale nel `TETTO_MESE_USD`. Il tetto per domanda vale per ogni passata, con un massimo di 2 × `TETTO_DOMANDA_USD` sul totale della domanda. Vicino a un tetto proprio (ultimi 2 × `TETTO_DOMANDA_USD`, al massimo un quarto del tetto) le prime previsioni aspettano e restano solo gli aggiornamenti, che sono quelli che contano allo spot scoring.
 
 **Costo stimato.** Circa 0,5 $ a passata, due passate per sotto-domanda: con circa 65 sotto-domande, circa 65 $ per tutto il trimestre (25-30 $ al mese, sotto il tetto proprio). Alla prima accensione molte sotto-domande sono già aperte: con 12 per giro e 8 $ al giorno ci vogliono alcuni giorni per coprirle tutte, partendo da quelle con lo spot più vicino.
 
@@ -137,9 +137,9 @@ Prezzi per milione di token: Opus 5.5 4 $ in ingresso e 20 $ in uscita, Sonnet 5
 | Fonte di risoluzione, mercati, serie storiche, AskNews | 0 $ |
 | **Totale** | **circa 0,45-0,55 $** (le prime 2 domande vere della v1 sono costate 0,30 e 0,39 $) |
 
-Al mese, con circa 250 domande, fanno **circa 110-140 $**. Il tetto mensile di 150 $ blocca comunque la spesa, e quello per domanda (0,90 $) ferma le domande che sforano. Market Pulse, se acceso, aggiunge circa 25-30 $ al mese (tetto proprio 30 $) dentro lo stesso tetto mensile generale.
+Al mese, con circa 250 domande, fanno **circa 110-140 $**. Dal 3/11/2026 il tetto mensile è 75 $ e quello giornaliero 3 $, perché i crediti sono 100 $ al mese e servono anche ad altri progetti: oltre il tetto le domande vengono saltate. Il tetto mensile blocca comunque la spesa, e quello per domanda (0,90 $) ferma le domande che sforano. Market Pulse, se acceso, aggiunge circa 25-30 $ al mese (tetto proprio 30 $) dentro lo stesso tetto mensile generale.
 
-Questa spesa la coprono i crediti API inclusi in Max 20x: 200 $ al mese, che scadono a fine ciclo ([documentazione ufficiale](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers)). Il costo reale per domanda compare nel registro e nel rapporto.
+Questa spesa la coprono i crediti API inclusi nell'abbonamento Max: **100 $ al mese** (200 $ sono solo con Ultra), che scadono a fine ciclo senza riporto ([documentazione ufficiale](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers)). Quando finiscono, le chiamate si fermano fino al ciclo dopo e non viene addebitato niente, salvo crediti comprati o ricarica automatica. Tutte le chiavi dell'organizzazione collegata pescano dallo stesso saldo, anche quelle di altri progetti. Il costo reale per domanda compare nel registro e nel rapporto.
 
 ## Minuti di GitHub Actions
 
